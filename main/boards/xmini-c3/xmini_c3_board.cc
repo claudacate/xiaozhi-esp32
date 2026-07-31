@@ -4,6 +4,7 @@
 #include "application.h"
 #include "button.h"
 #include "led/single_led.h"
+#include "led/rgb_matrix.h"
 #include "mcp_server.h"
 #include "settings.h"
 #include "config.h"
@@ -31,6 +32,7 @@ private:
     Button boot_button_;
     bool press_to_talk_enabled_ = false;
     PowerSaveTimer* power_save_timer_ = nullptr;
+    RgbMatrix* matrix_ = nullptr;
 
     void InitializePowerSaveTimer() {
 #if CONFIG_USE_ESP_WAKE_WORD
@@ -156,6 +158,54 @@ private:
         });
     }
 
+    void InitializeMatrix() {
+        matrix_ = new RgbMatrix(MATRIX_LED_GPIO, MATRIX_WIDTH, MATRIX_HEIGHT, MATRIX_SERPENTINE);
+        matrix_->Clear();
+    }
+
+    void InitializeMatrixTools() {
+        auto& mcp_server = McpServer::GetInstance();
+
+        mcp_server.AddTool("self.led_matrix.set_brightness",
+            "Set the brightness of the 8x8 LED matrix.",
+            PropertyList({
+                Property("brightness", kPropertyTypeInteger, 0, 100)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                matrix_->SetBrightness(properties["brightness"].value<int>(), true);
+                matrix_->Show();
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.turn_off",
+            "Turn off the 8x8 LED matrix.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                matrix_->StopAnimation();
+                matrix_->Clear();
+                return true;
+            });
+
+        // Bring-up helpers: prove the wiring and establish the panel's layout.
+        mcp_server.AddTool("self.led_matrix.test_pattern",
+            "Run a test pattern on the 8x8 LED matrix to verify it is working.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                matrix_->StartTestPattern();
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.probe_pixel",
+            "Light a single LED of the 8x8 matrix by its raw index, to determine the panel layout.",
+            PropertyList({
+                Property("index", kPropertyTypeInteger, 0, MATRIX_WIDTH * MATRIX_HEIGHT - 1)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                matrix_->ShowProbePixel(properties["index"].value<int>());
+                return true;
+            });
+    }
+
     void InitializeTools() {
         Settings settings("vendor");
         press_to_talk_enabled_ = settings.GetInt("press_to_talk", 0) != 0;
@@ -186,7 +236,9 @@ public:
         InitializeSsd1306Display();
         InitializeButtons();
         InitializePowerSaveTimer();
+        InitializeMatrix();
         InitializeTools();
+        InitializeMatrixTools();
 
         // 避免使用错误的固件，把 EFUSE 操作放在最后
         // 把 ESP32C3 的 VDD SPI 引脚作为普通 GPIO 口使用

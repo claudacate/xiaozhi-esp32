@@ -20,6 +20,14 @@
 #define BUILTIN_LED_GPIO        GPIO_NUM_2
 #define BOOT_BUTTON_GPIO        GPIO_NUM_9
 
+// External 8x8 WS2812 matrix on the UART1 header's U1TXD pad.
+// GPIO13 is only free because the flash runs in DIO mode; keep it that way.
+#define MATRIX_LED_GPIO         GPIO_NUM_13
+#define MATRIX_WIDTH            8
+#define MATRIX_HEIGHT           8
+// True if odd rows are wired right-to-left. Confirmed at first light-up.
+#define MATRIX_SERPENTINE       false
+
 #define DISPLAY_WIDTH   128
 #define DISPLAY_HEIGHT  64
 #define DISPLAY_MIRROR_X true
