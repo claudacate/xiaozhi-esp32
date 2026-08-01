@@ -2,6 +2,7 @@
 #include "device_state_event.h"
 #include "application.h"
 #include "settings.h"
+#include "mood_effects.h"
 
 namespace {
 
@@ -56,6 +57,8 @@ StateMirror::StateMirror(RgbMatrix* matrix) : matrix_(matrix) {
 
     Settings settings("matrix");
     enabled_ = settings.GetInt("mirror_enabled", 1) != 0;
+    mood_ = settings.GetString("mood", "");
+    mood_intensity_ = static_cast<uint8_t>(settings.GetInt("mood_intensity", 60));
 
     DeviceStateEventManager::GetInstance().RegisterStateChangeCallback(
         [this](DeviceState previous_state, DeviceState current_state) {
@@ -75,6 +78,35 @@ void StateMirror::SetEnabled(bool enabled, bool permanent) {
         return;
     }
     // Re-sync to whatever the assistant is doing right now.
+    auto state = Application::GetInstance().GetDeviceState();
+    OnDeviceStateChanged(state, state);
+}
+
+bool StateMirror::SetMood(const std::string& mood, uint8_t intensity, bool permanent) {
+    if (!MoodEffects::IsValidMood(mood)) {
+        return false;
+    }
+
+    mood_ = mood;
+    mood_intensity_ = intensity;
+    if (permanent) {
+        Settings settings("matrix", true);
+        settings.SetString("mood", mood_);
+        settings.SetInt("mood_intensity", mood_intensity_);
+    }
+
+    auto state = Application::GetInstance().GetDeviceState();
+    OnDeviceStateChanged(state, state);
+    return true;
+}
+
+void StateMirror::ClearMood(bool permanent) {
+    mood_.clear();
+    if (permanent) {
+        Settings settings("matrix", true);
+        settings.SetString("mood", "");
+    }
+
     auto state = Application::GetInstance().GetDeviceState();
     OnDeviceStateChanged(state, state);
 }
@@ -100,12 +132,29 @@ void StateMirror::OnDeviceStateChanged(DeviceState previous_state, DeviceState c
             matrix_->StartAnimation(100, [this]() { ShowErrorFrame(); });
             break;
         default:
-            // Idle and boot/setup states: the resting layer is dark until moods
-            // (SPEC.md 4.4) give it ambient content.
-            matrix_->StopAnimation();
-            matrix_->Clear();
+            ShowRest();
             break;
     }
+}
+
+void StateMirror::ShowRest() {
+    if (mood_.empty()) {
+        matrix_->StopAnimation();
+        matrix_->Clear();
+        return;
+    }
+    matrix_->StartAnimation(100, [this]() { ShowMoodFrame(); });
+}
+
+void StateMirror::ShowMoodFrame() {
+    if (!MoodEffects::RenderFrame(matrix_, mood_, animation_step_, mood_intensity_)) {
+        // Shouldn't happen (SetMood validates), but fail safe rather than spin
+        // on an unrecognized name.
+        matrix_->StopAnimation();
+        matrix_->Clear();
+        return;
+    }
+    animation_step_++;
 }
 
 void StateMirror::ShowConnectingFrame() {

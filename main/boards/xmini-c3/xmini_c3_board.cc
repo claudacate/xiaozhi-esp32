@@ -6,6 +6,7 @@
 #include "led/single_led.h"
 #include "led/rgb_matrix.h"
 #include "led/state_mirror.h"
+#include "led/mood_effects.h"
 #include "mcp_server.h"
 #include "settings.h"
 #include "config.h"
@@ -199,6 +200,32 @@ private:
             }),
             [this](const PropertyList& properties) -> ReturnValue {
                 state_mirror_->SetEnabled(properties["enabled"].value<bool>(), true);
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.set_mood",
+            "Set an ambient animation on the 8x8 matrix for idle time, e.g. for setting a vibe like "
+            "\"focus\" or \"relax\". Valid moods: " + std::string(MoodEffects::ValidMoods()) + ". "
+            "Only shows while idle; is replaced by the matrix's normal listening/thinking/speaking "
+            "reactions while actively in a conversation, then resumes automatically afterward.",
+            PropertyList({
+                Property("mood", kPropertyTypeString),
+                Property("intensity", kPropertyTypeInteger, 60, 0, 100)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto mood = properties["mood"].value<std::string>();
+                auto intensity = static_cast<uint8_t>(properties["intensity"].value<int>());
+                if (!state_mirror_->SetMood(mood, intensity)) {
+                    throw std::runtime_error("Invalid mood: " + mood + ". Valid moods: " + MoodEffects::ValidMoods());
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.clear_mood",
+            "Stop the 8x8 matrix's ambient mood animation; it goes dark while idle instead.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->ClearMood();
                 return true;
             });
 
