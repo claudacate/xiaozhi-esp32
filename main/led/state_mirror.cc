@@ -53,6 +53,22 @@ std::vector<std::pair<int, int>> BuildPerimeter(int width, int height) {
     return ring;
 }
 
+// True for the states OnDeviceStateChanged's switch below gives their own
+// animation (i.e. everything that isn't the idle/rest bucket). Kept in sync
+// with that switch's case list.
+bool IsActiveMirrorState(DeviceState state) {
+    switch (state) {
+        case kDeviceStateConnecting:
+        case kDeviceStateListening:
+        case kDeviceStateAudioTesting:
+        case kDeviceStateSpeaking:
+        case kDeviceStateFatalError:
+            return true;
+        default:
+            return false;
+    }
+}
+
 MatrixColor Scale(MatrixColor color, int level_0_255) {
     return {
         static_cast<uint8_t>(color.red * level_0_255 / 255),
@@ -69,6 +85,9 @@ int TriangleLevel(int step, int half_period_steps) {
     }
     return (half_period_steps * 2 - phase) * 255 / half_period_steps;
 }
+
+// ~1.5s at the mood tick rate (100ms/frame).
+constexpr int kMoodPreviewFrames = 15;
 
 }  // namespace
 
@@ -119,7 +138,19 @@ bool StateMirror::SetMood(const std::string& mood, uint8_t intensity, bool perma
     }
 
     auto state = Application::GetInstance().GetDeviceState();
-    OnDeviceStateChanged(state, state);
+    if (enabled_ && IsActiveMirrorState(state)) {
+        // Idle is still owned by whatever's actually happening (listening,
+        // thinking...), so the mood wouldn't be seen until that ends - which
+        // could be a while. Give a brief preview now so the visual lands
+        // together with the voice confirmation, then hand back to the live
+        // conversation state.
+        ESP_LOGI(TAG, "Previewing mood '%s' during %s", mood_.c_str(), StateName(state));
+        animation_step_ = 0;
+        mood_preview_frames_ = kMoodPreviewFrames;
+        matrix_->StartAnimation(100, [this]() { ShowMoodPreviewFrame(); });
+    } else {
+        OnDeviceStateChanged(state, state);
+    }
     return true;
 }
 
@@ -189,6 +220,20 @@ void StateMirror::ShowMoodFrame() {
         return;
     }
     animation_step_++;
+}
+
+void StateMirror::ShowMoodPreviewFrame() {
+    if (mood_preview_frames_ > 0) {
+        MoodEffects::RenderFrame(matrix_, mood_, animation_step_, mood_intensity_);
+        animation_step_++;
+        mood_preview_frames_--;
+        return;
+    }
+    // Preview's over - hand back to whatever the assistant is actually doing
+    // now (it may have moved on since the preview started).
+    ESP_LOGI(TAG, "Mood preview done, resuming live state");
+    auto state = Application::GetInstance().GetDeviceState();
+    OnDeviceStateChanged(state, state);
 }
 
 void StateMirror::ShowConnectingFrame() {

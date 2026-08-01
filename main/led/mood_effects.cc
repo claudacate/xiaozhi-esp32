@@ -37,6 +37,25 @@ MatrixColor HeatColor(uint8_t heat) {
     }
 }
 
+// hue in degrees [0,360), saturation/value in [0,1].
+MatrixColor HsvToRgb(float hue, float saturation, float value) {
+    float c = value * saturation;
+    float x = c * (1.0f - fabsf(fmodf(hue / 60.0f, 2.0f) - 1.0f));
+    float m = value - c;
+    float r, g, b;
+    if (hue < 60) { r = c; g = x; b = 0; }
+    else if (hue < 120) { r = x; g = c; b = 0; }
+    else if (hue < 180) { r = 0; g = c; b = x; }
+    else if (hue < 240) { r = 0; g = x; b = c; }
+    else if (hue < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+    return {
+        static_cast<uint8_t>((r + m) * 255),
+        static_cast<uint8_t>((g + m) * 255),
+        static_cast<uint8_t>((b + m) * 255),
+    };
+}
+
 }  // namespace
 
 bool MoodEffects::IsValidMood(const std::string& mood) {
@@ -146,21 +165,18 @@ void MoodEffects::Starfield(RgbMatrix* matrix, int step, uint8_t intensity) {
     }
 }
 
-// Green/purple bands drifting vertically over time.
+// Hue drifts through green -> cyan -> blue -> purple/magenta and back, at a
+// slightly different phase per row, for a shimmering band effect closer to a
+// real aurora than a flat two-color blend.
 void MoodEffects::Aurora(RgbMatrix* matrix, int step, uint8_t intensity) {
     int w = matrix->width();
     int h = matrix->height();
-    float amp = 0.4f + (intensity / 100.0f) * 0.6f;
-    const MatrixColor kGreen{0, 255, 120};
-    const MatrixColor kPurple{140, 0, 255};
+    float value = 0.5f + (intensity / 100.0f) * 0.5f;
     for (int y = 0; y < h; y++) {
-        float phase = step * 0.05f + y * 0.6f;
-        float t = (sinf(phase) + 1.0f) * 0.5f;
-        MatrixColor c{
-            static_cast<uint8_t>((kGreen.red + (kPurple.red - kGreen.red) * t) * amp),
-            static_cast<uint8_t>((kGreen.green + (kPurple.green - kGreen.green) * t) * amp),
-            static_cast<uint8_t>((kGreen.blue + (kPurple.blue - kGreen.blue) * t) * amp),
-        };
+        float phase = step * 0.03f + y * 0.5f;
+        float t = (sinf(phase) + 1.0f) * 0.5f;  // 0..1
+        float hue = 120.0f + t * 180.0f;        // green(120) .. purple/magenta(300)
+        MatrixColor c = HsvToRgb(hue, 0.9f, value);
         for (int x = 0; x < w; x++) {
             matrix->SetPixelLocked(x, y, c);
         }

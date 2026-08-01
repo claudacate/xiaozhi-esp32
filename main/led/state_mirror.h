@@ -36,6 +36,7 @@ private:
     void ShowSpeakingFrame();
     void ShowErrorFrame();
     void ShowMoodFrame();
+    void ShowMoodPreviewFrame();
     // Idle/boot states: the active mood if one is set, otherwise dark.
     void ShowRest();
 
@@ -45,6 +46,7 @@ private:
     std::vector<std::pair<int, int>> perimeter_;
     std::string mood_;
     uint8_t mood_intensity_ = 60;
+    int mood_preview_frames_ = 0;
 };
 
 #endif // _STATE_MIRROR_H_
