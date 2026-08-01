@@ -3,8 +3,28 @@
 #include "application.h"
 #include "settings.h"
 #include "mood_effects.h"
+#include <esp_log.h>
+
+#define TAG "StateMirror"
 
 namespace {
+
+const char* StateName(DeviceState state) {
+    switch (state) {
+        case kDeviceStateUnknown: return "unknown";
+        case kDeviceStateStarting: return "starting";
+        case kDeviceStateWifiConfiguring: return "wifi_configuring";
+        case kDeviceStateIdle: return "idle";
+        case kDeviceStateConnecting: return "connecting";
+        case kDeviceStateListening: return "listening";
+        case kDeviceStateSpeaking: return "speaking";
+        case kDeviceStateUpgrading: return "upgrading";
+        case kDeviceStateActivating: return "activating";
+        case kDeviceStateAudioTesting: return "audio_testing";
+        case kDeviceStateFatalError: return "fatal_error";
+        default: return "invalid";
+    }
+}
 
 // Walks the panel's outer ring, starting top-left, clockwise. Computed from
 // actual dimensions rather than hardcoded for 8x8, so it stays correct if the
@@ -67,6 +87,7 @@ StateMirror::StateMirror(RgbMatrix* matrix) : matrix_(matrix) {
 }
 
 void StateMirror::SetEnabled(bool enabled, bool permanent) {
+    ESP_LOGI(TAG, "SetEnabled(%d, permanent=%d)", enabled, permanent);
     enabled_ = enabled;
     if (permanent) {
         Settings settings("matrix", true);
@@ -84,8 +105,10 @@ void StateMirror::SetEnabled(bool enabled, bool permanent) {
 
 bool StateMirror::SetMood(const std::string& mood, uint8_t intensity, bool permanent) {
     if (!MoodEffects::IsValidMood(mood)) {
+        ESP_LOGW(TAG, "SetMood: rejected unknown mood '%s'", mood.c_str());
         return false;
     }
+    ESP_LOGI(TAG, "SetMood: '%s' intensity=%d", mood.c_str(), intensity);
 
     mood_ = mood;
     mood_intensity_ = intensity;
@@ -101,6 +124,7 @@ bool StateMirror::SetMood(const std::string& mood, uint8_t intensity, bool perma
 }
 
 void StateMirror::ClearMood(bool permanent) {
+    ESP_LOGI(TAG, "ClearMood");
     mood_.clear();
     if (permanent) {
         Settings settings("matrix", true);
@@ -112,6 +136,10 @@ void StateMirror::ClearMood(bool permanent) {
 }
 
 void StateMirror::OnDeviceStateChanged(DeviceState previous_state, DeviceState current_state) {
+    ESP_LOGI(TAG, "Device state: %s -> %s (mirror %s, mood '%s')",
+        StateName(previous_state), StateName(current_state),
+        enabled_ ? "enabled" : "disabled", mood_.c_str());
+
     if (!enabled_) {
         return;
     }
@@ -119,16 +147,20 @@ void StateMirror::OnDeviceStateChanged(DeviceState previous_state, DeviceState c
     animation_step_ = 0;
     switch (current_state) {
         case kDeviceStateConnecting:
+            ESP_LOGI(TAG, "-> connecting animation (flash + comet)");
             matrix_->StartAnimation(80, [this]() { ShowConnectingFrame(); });
             break;
         case kDeviceStateListening:
         case kDeviceStateAudioTesting:
+            ESP_LOGI(TAG, "-> listening animation (breathing)");
             matrix_->StartAnimation(40, [this]() { ShowListeningFrame(); });
             break;
         case kDeviceStateSpeaking:
+            ESP_LOGI(TAG, "-> speaking animation (pulse)");
             matrix_->StartAnimation(60, [this]() { ShowSpeakingFrame(); });
             break;
         case kDeviceStateFatalError:
+            ESP_LOGI(TAG, "-> error animation (red pulse)");
             matrix_->StartAnimation(100, [this]() { ShowErrorFrame(); });
             break;
         default:
@@ -139,10 +171,12 @@ void StateMirror::OnDeviceStateChanged(DeviceState previous_state, DeviceState c
 
 void StateMirror::ShowRest() {
     if (mood_.empty()) {
+        ESP_LOGI(TAG, "-> rest, no mood set: dark");
         matrix_->StopAnimation();
         matrix_->Clear();
         return;
     }
+    ESP_LOGI(TAG, "-> rest, mood '%s' active", mood_.c_str());
     matrix_->StartAnimation(100, [this]() { ShowMoodFrame(); });
 }
 
