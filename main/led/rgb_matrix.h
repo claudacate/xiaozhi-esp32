@@ -17,7 +17,10 @@ struct MatrixColor {
 class RgbMatrix {
 public:
     // serpentine: true if odd rows are wired right-to-left (boustrophedon).
-    RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine = false);
+    // rotation_ccw_steps: how many 90-degree counterclockwise turns to apply
+    // to all (x,y) content, e.g. to compensate for how the panel is physically
+    // mounted. 0-3; wraps. Requires width == height.
+    RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine = false, int rotation_ccw_steps = 0);
     ~RgbMatrix();
 
     // Brightness is 0-100. The power budget still applies on top of it, so no
@@ -62,6 +65,7 @@ private:
     int width_;
     int height_;
     bool serpentine_;
+    int rotation_ccw_steps_;
     int max_milliamps_;
     uint8_t brightness_ = 0;
 };

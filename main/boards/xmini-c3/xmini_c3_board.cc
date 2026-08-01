@@ -162,7 +162,7 @@ private:
     }
 
     void InitializeMatrix() {
-        matrix_ = new RgbMatrix(MATRIX_LED_GPIO, MATRIX_WIDTH, MATRIX_HEIGHT, MATRIX_SERPENTINE);
+        matrix_ = new RgbMatrix(MATRIX_LED_GPIO, MATRIX_WIDTH, MATRIX_HEIGHT, MATRIX_SERPENTINE, MATRIX_ROTATION_CCW_STEPS);
         matrix_->Clear();
         state_mirror_ = new StateMirror(matrix_);
     }

@@ -27,6 +27,10 @@
 #define MATRIX_HEIGHT           8
 // True if odd rows are wired right-to-left. Confirmed at first light-up.
 #define MATRIX_SERPENTINE       false
+// Number of 90-degree counterclockwise turns applied to matrix content, to
+// compensate for how the panel is physically mounted. If the visible
+// rotation comes out backwards, use 3 instead of 1 (i.e. CW instead of CCW).
+#define MATRIX_ROTATION_CCW_STEPS 1
 
 #define DISPLAY_WIDTH   128
 #define DISPLAY_HEIGHT  64

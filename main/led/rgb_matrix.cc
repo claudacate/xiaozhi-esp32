@@ -14,10 +14,13 @@
 // once the actual supply is known.
 #define DEFAULT_BUDGET_MA 1000
 
-RgbMatrix::RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine)
-    : width_(width), height_(height), serpentine_(serpentine) {
+RgbMatrix::RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine, int rotation_ccw_steps)
+    : width_(width), height_(height), serpentine_(serpentine),
+      rotation_ccw_steps_(((rotation_ccw_steps % 4) + 4) % 4) {
     // If the gpio is not connected, you should not construct this class
     assert(gpio != GPIO_NUM_NC);
+    // The rotation math below assumes a square panel.
+    assert(rotation_ccw_steps_ == 0 || width_ == height_);
 
     frame_.resize(width_ * height_);
 
@@ -51,8 +54,8 @@ RgbMatrix::RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine)
     Settings settings("matrix");
     brightness_ = settings.GetInt("brightness", DEFAULT_BRIGHTNESS);
     max_milliamps_ = settings.GetInt("max_ma", DEFAULT_BUDGET_MA);
-    ESP_LOGI(TAG, "%dx%d matrix on GPIO%d, brightness %d%%, budget %dmA",
-        width_, height_, gpio, brightness_, max_milliamps_);
+    ESP_LOGI(TAG, "%dx%d matrix on GPIO%d, brightness %d%%, budget %dmA, rotation %d x 90deg CCW",
+        width_, height_, gpio, brightness_, max_milliamps_, rotation_ccw_steps_);
 }
 
 RgbMatrix::~RgbMatrix() {
@@ -63,6 +66,17 @@ RgbMatrix::~RgbMatrix() {
 }
 
 int RgbMatrix::MapXY(int x, int y) const {
+    // Rotate the logical (x,y) content by rotation_ccw_steps * 90 degrees
+    // counterclockwise before applying the physical wiring layout below.
+    // Verified by tracking all four corners through the transform.
+    int n = width_;  // square panel, asserted in the constructor
+    switch (rotation_ccw_steps_) {
+        case 1: { int px = n - 1 - y, py = x; x = px; y = py; break; }
+        case 2: { int px = n - 1 - x, py = n - 1 - y; x = px; y = py; break; }
+        case 3: { int px = y, py = n - 1 - x; x = px; y = py; break; }
+        default: break;
+    }
+
     if (serpentine_ && (y % 2) == 1) {
         x = width_ - 1 - x;
     }
