@@ -5,6 +5,7 @@
 #include "button.h"
 #include "led/single_led.h"
 #include "led/rgb_matrix.h"
+#include "led/state_mirror.h"
 #include "mcp_server.h"
 #include "settings.h"
 #include "config.h"
@@ -33,6 +34,7 @@ private:
     bool press_to_talk_enabled_ = false;
     PowerSaveTimer* power_save_timer_ = nullptr;
     RgbMatrix* matrix_ = nullptr;
+    StateMirror* state_mirror_ = nullptr;
 
     void InitializePowerSaveTimer() {
 #if CONFIG_USE_ESP_WAKE_WORD
@@ -161,6 +163,7 @@ private:
     void InitializeMatrix() {
         matrix_ = new RgbMatrix(MATRIX_LED_GPIO, MATRIX_WIDTH, MATRIX_HEIGHT, MATRIX_SERPENTINE);
         matrix_->Clear();
+        state_mirror_ = new StateMirror(matrix_);
     }
 
     void InitializeMatrixTools() {
@@ -181,8 +184,21 @@ private:
             "Turn off the 8x8 LED matrix.",
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
+                // Also disables the state mirror, otherwise the next state change
+                // (e.g. listening starts) would immediately light it back up.
+                state_mirror_->SetEnabled(false);
                 matrix_->StopAnimation();
                 matrix_->Clear();
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.set_state_mirror",
+            "Enable or disable the 8x8 matrix's live reflection of what Xiaozhi is doing (listening, thinking, speaking).",
+            PropertyList({
+                Property("enabled", kPropertyTypeBoolean)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->SetEnabled(properties["enabled"].value<bool>(), true);
                 return true;
             });
 
