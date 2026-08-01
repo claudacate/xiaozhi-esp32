@@ -4,7 +4,10 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.16)
 
-set(PROJECT_VER "1.8.3")
+# Bumped above the public OTA channel's version so this custom build (with the
+# WS2812 matrix driver) is never auto-overwritten by a cloud "upgrade". See
+# DECISIONS.md.
+set(PROJECT_VER "1.99.0")
 
 # Add this line to disable the specific warning
 add_compile_options(-Wno-missing-field-initializers)
