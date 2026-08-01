@@ -4,7 +4,7 @@
 
 #define TAG "RgbMatrix"
 
-#define DEFAULT_BRIGHTNESS 20
+#define DEFAULT_BRIGHTNESS 50
 
 // A WS2812 draws roughly 20mA per colour channel at full scale, so a pixel
 // showing full white is about 60mA. Used to estimate a frame's draw.
