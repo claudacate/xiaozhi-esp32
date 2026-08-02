@@ -27,14 +27,16 @@
 #define MATRIX_HEIGHT           8
 // True if odd rows are wired right-to-left. Confirmed at first light-up.
 #define MATRIX_SERPENTINE       false
-// Number of 90-degree counterclockwise turns applied to matrix content, to
-// compensate for how the panel is physically mounted. If the visible
-// rotation comes out backwards, use 3 instead of 1 (i.e. CW instead of CCW).
-#define MATRIX_ROTATION_CCW_STEPS 1
+// Number of 90-degree turns applied to matrix content, to compensate for how
+// the panel is physically mounted. 2 = 180 degrees (direction-unambiguous,
+// unlike 1 or 3 which differ by CW vs CCW).
+#define MATRIX_ROTATION_CCW_STEPS 2
 
+// Both mirror flags flipped from the board's stock true/true to rotate the
+// OLED's output 180 degrees, matching the matrix's orientation.
 #define DISPLAY_WIDTH   128
 #define DISPLAY_HEIGHT  64
-#define DISPLAY_MIRROR_X true
-#define DISPLAY_MIRROR_Y true
+#define DISPLAY_MIRROR_X false
+#define DISPLAY_MIRROR_Y false
 
 #endif // _BOARD_CONFIG_H_
