@@ -34,66 +34,6 @@ const char* StateName(DeviceState state) {
     }
 }
 
-// Walks the panel's outer ring, starting top-left, clockwise. Computed from
-// actual dimensions rather than hardcoded for 8x8, so it stays correct if the
-// panel size in config.h ever changes.
-std::vector<std::pair<int, int>> BuildPerimeter(int width, int height) {
-    std::vector<std::pair<int, int>> ring;
-    if (width <= 0 || height <= 0) {
-        return ring;
-    }
-    for (int x = 0; x < width; x++) {
-        ring.push_back({x, 0});
-    }
-    for (int y = 1; y < height; y++) {
-        ring.push_back({width - 1, y});
-    }
-    if (height > 1) {
-        for (int x = width - 2; x >= 0; x--) {
-            ring.push_back({x, height - 1});
-        }
-    }
-    if (width > 1) {
-        for (int y = height - 2; y >= 1; y--) {
-            ring.push_back({0, y});
-        }
-    }
-    return ring;
-}
-
-// True for the states OnDeviceStateChanged's switch below gives their own
-// animation (i.e. everything that isn't the idle/rest bucket). Kept in sync
-// with that switch's case list.
-bool IsActiveMirrorState(DeviceState state) {
-    switch (state) {
-        case kDeviceStateConnecting:
-        case kDeviceStateListening:
-        case kDeviceStateAudioTesting:
-        case kDeviceStateSpeaking:
-        case kDeviceStateFatalError:
-            return true;
-        default:
-            return false;
-    }
-}
-
-MatrixColor Scale(MatrixColor color, int level_0_255) {
-    return {
-        static_cast<uint8_t>(color.red * level_0_255 / 255),
-        static_cast<uint8_t>(color.green * level_0_255 / 255),
-        static_cast<uint8_t>(color.blue * level_0_255 / 255),
-    };
-}
-
-// Symmetric triangle wave, 0 to 255 and back, over 2 * half_period_steps.
-int TriangleLevel(int step, int half_period_steps) {
-    int phase = step % (half_period_steps * 2);
-    if (phase < half_period_steps) {
-        return phase * 255 / half_period_steps;
-    }
-    return (half_period_steps * 2 - phase) * 255 / half_period_steps;
-}
-
 // Green -> amber -> red as fraction (0-1, elapsed/total) increases.
 MatrixColor TimerColor(float fraction) {
     const MatrixColor kGreen{0, 200, 60};
@@ -121,15 +61,10 @@ std::string ToLower(const std::string& s) {
     return out;
 }
 
-// ~1.5s at the mood tick rate (100ms/frame).
-constexpr int kMoodPreviewFrames = 15;
-
 }  // namespace
 
 StateMirror::StateMirror(RgbMatrix* matrix)
     : matrix_(matrix), canvas_(matrix->width(), matrix->height()) {
-    perimeter_ = BuildPerimeter(matrix_->width(), matrix_->height());
-
     Settings settings("matrix");
     enabled_ = settings.GetInt("mirror_enabled", 1) != 0;
     mood_ = settings.GetString("mood", "");
@@ -260,49 +195,7 @@ void StateMirror::CanvasClear() {
 
 void StateMirror::RefreshDisplay() {
     auto state = Application::GetInstance().GetDeviceState();
-    if (!enabled_ || !IsActiveMirrorState(state)) {
-        OnDeviceStateChanged(state, state);
-        return;
-    }
-
-    // Idle is still owned by whatever's actually happening (listening,
-    // thinking...), so the new idle content wouldn't be seen until that ends -
-    // which could be a while. Give a brief preview now so the visual lands
-    // together with the voice confirmation, then hand back to live state.
-    ESP_LOGI(TAG, "Previewing idle content during %s", StateName(state));
-    switch (idle_mode_) {
-        case IdleMode::kMood:
-            StartTransient(kMoodPreviewFrames, 100, [this]() {
-                MoodEffects::RenderFrame(matrix_, mood_, animation_step_, mood_intensity_);
-                animation_step_++;
-            });
-            break;
-        case IdleMode::kClock: {
-            time_t now = time(nullptr);
-            struct tm tm_now;
-            localtime_r(&now, &tm_now);
-            char buf[6];
-            snprintf(buf, sizeof(buf), "%02d:%02d", tm_now.tm_hour, tm_now.tm_min);
-            std::string text = buf;
-            StartTransient(Marquee::FrameCount(matrix_, text), 100, [this, text]() {
-                Marquee::RenderFrame(matrix_, text, animation_step_, MatrixColor{0, 220, 255});
-                matrix_->ShowLocked();
-                animation_step_++;
-            });
-            break;
-        }
-        case IdleMode::kCanvas:
-            StartTransient(kMoodPreviewFrames, 100, [this]() {
-                canvas_.RenderLocked(matrix_);
-                matrix_->ShowLocked();
-                animation_step_++;
-            });
-            break;
-        case IdleMode::kDark:
-        default:
-            OnDeviceStateChanged(state, state);
-            break;
-    }
+    OnDeviceStateChanged(state, state);
 }
 
 void StateMirror::StartTimer(int minutes, const std::string& mode) {
@@ -445,29 +338,11 @@ void StateMirror::OnDeviceStateChanged(DeviceState previous_state, DeviceState c
         return;
     }
 
+    // Idle content (mood/clock/canvas/timer) shows regardless of what the
+    // assistant is doing - it no longer reacts to listening/thinking/
+    // speaking/error, see the class comment in state_mirror.h.
     animation_step_ = 0;
-    switch (current_state) {
-        case kDeviceStateConnecting:
-            ESP_LOGI(TAG, "-> connecting animation (flash + comet)");
-            matrix_->StartAnimation(80, [this]() { ShowConnectingFrame(); });
-            break;
-        case kDeviceStateListening:
-        case kDeviceStateAudioTesting:
-            ESP_LOGI(TAG, "-> listening animation (breathing)");
-            matrix_->StartAnimation(40, [this]() { ShowListeningFrame(); });
-            break;
-        case kDeviceStateSpeaking:
-            ESP_LOGI(TAG, "-> speaking animation (pulse)");
-            matrix_->StartAnimation(60, [this]() { ShowSpeakingFrame(); });
-            break;
-        case kDeviceStateFatalError:
-            ESP_LOGI(TAG, "-> error animation (red pulse)");
-            matrix_->StartAnimation(100, [this]() { ShowErrorFrame(); });
-            break;
-        default:
-            ShowRest();
-            break;
-    }
+    ShowRest();
 }
 
 void StateMirror::ShowRest() {
@@ -497,54 +372,6 @@ void StateMirror::ShowRest() {
             matrix_->Clear();
             break;
     }
-}
-
-void StateMirror::ShowConnectingFrame() {
-    // A brief flash acknowledges the wake word, then a comet chases the
-    // panel's border while the assistant is thinking.
-    const MatrixColor kThinkColor{160, 40, 255};  // violet, distinct from onboard's blue
-
-    if (animation_step_ < 3) {
-        matrix_->FillLocked({255, 255, 255});
-    } else if (!perimeter_.empty()) {
-        matrix_->FillLocked(MatrixColor());
-        int len = static_cast<int>(perimeter_.size());
-        int head = (animation_step_ - 3) % len;
-        for (int trail = 0; trail < 3; trail++) {
-            int index = (head - trail + len) % len;
-            int level = 255 - trail * 90;
-            auto [x, y] = perimeter_[index];
-            matrix_->SetPixelLocked(x, y, Scale(kThinkColor, level));
-        }
-    }
-    matrix_->ShowLocked();
-    animation_step_++;
-}
-
-void StateMirror::ShowListeningFrame() {
-    const MatrixColor kListenColor{0, 140, 255};  // cyan-blue, distinct from onboard's red
-    int level = TriangleLevel(animation_step_, 50);  // ~2s breathing period at 40ms/tick
-    matrix_->FillLocked(Scale(kListenColor, level));
-    matrix_->ShowLocked();
-    animation_step_++;
-}
-
-void StateMirror::ShowSpeakingFrame() {
-    const MatrixColor kSpeakColor{255, 150, 0};  // warm amber, distinct from onboard's green
-    const int kPeriodSteps = 12;  // ~720ms at 60ms/tick
-    int phase = animation_step_ % kPeriodSteps;
-    int level = 255 - phase * 255 / kPeriodSteps;
-    matrix_->FillLocked(Scale(kSpeakColor, level));
-    matrix_->ShowLocked();
-    animation_step_++;
-}
-
-void StateMirror::ShowErrorFrame() {
-    const MatrixColor kErrorColor{255, 0, 0};
-    int level = TriangleLevel(animation_step_, 15);  // ~3s slow pulse period at 100ms/tick
-    matrix_->FillLocked(Scale(kErrorColor, level));
-    matrix_->ShowLocked();
-    animation_step_++;
 }
 
 void StateMirror::ShowMoodFrame() {

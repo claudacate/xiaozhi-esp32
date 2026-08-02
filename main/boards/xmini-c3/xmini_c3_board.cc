@@ -187,8 +187,9 @@ private:
             "Turn off the 8x8 LED matrix.",
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
-                // Also disables the state mirror, otherwise the next state change
-                // (e.g. listening starts) would immediately light it back up.
+                // Also disables the matrix's device-state hook, otherwise the
+                // next state change (e.g. returning to idle) would immediately
+                // light it back up with whatever mood/clock/canvas was set.
                 state_mirror_->SetEnabled(false);
                 matrix_->StopAnimation();
                 matrix_->Clear();
@@ -196,7 +197,8 @@ private:
             });
 
         mcp_server.AddTool("self.led_matrix.set_state_mirror",
-            "Enable or disable the 8x8 matrix's live reflection of what Xiaozhi is doing (listening, thinking, speaking).",
+            "Pause or resume the 8x8 matrix (mood/clock/canvas/timer). Unlike turn_off, resuming shows "
+            "whatever was set before (e.g. the mood) rather than requiring it to be set again.",
             PropertyList({
                 Property("enabled", kPropertyTypeBoolean)
             }),

@@ -7,21 +7,18 @@
 #include <esp_timer.h>
 #include <functional>
 #include <string>
-#include <utility>
-#include <vector>
 
-// Drives the external matrix to reflect what the assistant is currently doing
-// (thinking, listening, speaking...), independent of any LLM/voice command.
-// Hooks DeviceStateEventManager, so it needs no changes to application.cc.
+// Owns the external matrix's idle-time content - mood, clock and canvas are
+// mutually exclusive (IdleMode); a running Pomodoro/timer layers on top and
+// always wins while it runs. Fortune and weather are transient: they take
+// over the whole panel for a fixed duration regardless of what's showing,
+// then hand back to live state (StartTransient).
 //
-// Also owns idle-time content, which is mutually exclusive - mood, clock and
-// canvas each replace whichever was showing before (IdleMode). A running
-// Pomodoro/timer is layered on top of that and always wins while it runs.
-// Fortune and weather are transient: they take over the whole panel for a
-// fixed duration regardless of what's showing, then hand back to live state
-// (StartTransient). Active conversation states (listening/thinking/speaking/
-// error) always take priority over all idle content, mirroring the panel's
-// original design.
+// Hooks DeviceStateEventManager so idle content responds to the device
+// actually going idle, but does NOT animate in response to listening/
+// thinking/speaking/error - that reaction was removed per user feedback
+// (it interrupted moods and read as the panel "freezing"); see DECISIONS.md.
+// SetEnabled is a master on/off for everything this class shows.
 //
 // This hand-rolled priority resolution - rather than a fully generic stack -
 // is deliberate: it covers exactly the features that exist, see SPEC.md 3 for
@@ -64,15 +61,9 @@ private:
     enum class IdleMode { kDark, kMood, kClock, kCanvas };
 
     void OnDeviceStateChanged(DeviceState previous_state, DeviceState current_state);
-    // Call after any idle-content mutation (SetMood, SetClockEnabled, Canvas*).
-    // If the device is mid-conversation, idle content wouldn't be seen until
-    // it ends, so this gives a brief preview of the new idle_mode_ content
-    // instead, then hands back to live state. Otherwise just re-syncs.
+    // Call after any idle-content mutation (SetMood, SetClockEnabled, Canvas*)
+    // to re-render immediately with whatever's live right now.
     void RefreshDisplay();
-    void ShowConnectingFrame();
-    void ShowListeningFrame();
-    void ShowSpeakingFrame();
-    void ShowErrorFrame();
     void ShowMoodFrame();
     void ShowClockFrame();
     void ShowTimerFrame();
@@ -95,7 +86,6 @@ private:
     Canvas canvas_;
     bool enabled_ = true;
     int animation_step_ = 0;
-    std::vector<std::pair<int, int>> perimeter_;
 
     std::string mood_;
     uint8_t mood_intensity_ = 60;
