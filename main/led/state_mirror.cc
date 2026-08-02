@@ -190,21 +190,7 @@ bool StateMirror::SetMood(const std::string& mood, uint8_t intensity, bool perma
         settings.SetInt("mood_intensity", mood_intensity_);
     }
 
-    auto state = Application::GetInstance().GetDeviceState();
-    if (enabled_ && IsActiveMirrorState(state)) {
-        // Idle is still owned by whatever's actually happening (listening,
-        // thinking...), so the mood wouldn't be seen until that ends - which
-        // could be a while. Give a brief preview now so the visual lands
-        // together with the voice confirmation, then hand back to the live
-        // conversation state.
-        ESP_LOGI(TAG, "Previewing mood '%s' during %s", mood_.c_str(), StateName(state));
-        StartTransient(kMoodPreviewFrames, 100, [this]() {
-            MoodEffects::RenderFrame(matrix_, mood_, animation_step_, mood_intensity_);
-            animation_step_++;
-        });
-    } else {
-        OnDeviceStateChanged(state, state);
-    }
+    RefreshDisplay();
     return true;
 }
 
@@ -219,8 +205,7 @@ void StateMirror::ClearMood(bool permanent) {
         settings.SetString("mood", "");
     }
 
-    auto state = Application::GetInstance().GetDeviceState();
-    OnDeviceStateChanged(state, state);
+    RefreshDisplay();
 }
 
 void StateMirror::SetClockEnabled(bool enabled) {
@@ -233,8 +218,7 @@ void StateMirror::SetClockEnabled(bool enabled) {
         idle_mode_ = IdleMode::kDark;
     }
 
-    auto state = Application::GetInstance().GetDeviceState();
-    OnDeviceStateChanged(state, state);
+    RefreshDisplay();
 }
 
 bool StateMirror::CanvasDraw(const std::string& palette, const std::string& grid) {
@@ -244,8 +228,7 @@ bool StateMirror::CanvasDraw(const std::string& palette, const std::string& grid
     }
     ESP_LOGI(TAG, "CanvasDraw: ok");
     idle_mode_ = IdleMode::kCanvas;
-    auto state = Application::GetInstance().GetDeviceState();
-    OnDeviceStateChanged(state, state);
+    RefreshDisplay();
     return true;
 }
 
@@ -256,16 +239,14 @@ bool StateMirror::CanvasSprite(const std::string& name) {
     }
     ESP_LOGI(TAG, "CanvasSprite: '%s'", name.c_str());
     idle_mode_ = IdleMode::kCanvas;
-    auto state = Application::GetInstance().GetDeviceState();
-    OnDeviceStateChanged(state, state);
+    RefreshDisplay();
     return true;
 }
 
 void StateMirror::CanvasSetPixel(int x, int y, MatrixColor color) {
     canvas_.SetPixel(x, y, color);
     idle_mode_ = IdleMode::kCanvas;
-    auto state = Application::GetInstance().GetDeviceState();
-    OnDeviceStateChanged(state, state);
+    RefreshDisplay();
 }
 
 void StateMirror::CanvasClear() {
@@ -274,8 +255,54 @@ void StateMirror::CanvasClear() {
     if (idle_mode_ == IdleMode::kCanvas) {
         idle_mode_ = IdleMode::kDark;
     }
+    RefreshDisplay();
+}
+
+void StateMirror::RefreshDisplay() {
     auto state = Application::GetInstance().GetDeviceState();
-    OnDeviceStateChanged(state, state);
+    if (!enabled_ || !IsActiveMirrorState(state)) {
+        OnDeviceStateChanged(state, state);
+        return;
+    }
+
+    // Idle is still owned by whatever's actually happening (listening,
+    // thinking...), so the new idle content wouldn't be seen until that ends -
+    // which could be a while. Give a brief preview now so the visual lands
+    // together with the voice confirmation, then hand back to live state.
+    ESP_LOGI(TAG, "Previewing idle content during %s", StateName(state));
+    switch (idle_mode_) {
+        case IdleMode::kMood:
+            StartTransient(kMoodPreviewFrames, 100, [this]() {
+                MoodEffects::RenderFrame(matrix_, mood_, animation_step_, mood_intensity_);
+                animation_step_++;
+            });
+            break;
+        case IdleMode::kClock: {
+            time_t now = time(nullptr);
+            struct tm tm_now;
+            localtime_r(&now, &tm_now);
+            char buf[6];
+            snprintf(buf, sizeof(buf), "%02d:%02d", tm_now.tm_hour, tm_now.tm_min);
+            std::string text = buf;
+            StartTransient(Marquee::FrameCount(matrix_, text), 100, [this, text]() {
+                Marquee::RenderFrame(matrix_, text, animation_step_, MatrixColor{0, 220, 255});
+                matrix_->ShowLocked();
+                animation_step_++;
+            });
+            break;
+        }
+        case IdleMode::kCanvas:
+            StartTransient(kMoodPreviewFrames, 100, [this]() {
+                canvas_.RenderLocked(matrix_);
+                matrix_->ShowLocked();
+                animation_step_++;
+            });
+            break;
+        case IdleMode::kDark:
+        default:
+            OnDeviceStateChanged(state, state);
+            break;
+    }
 }
 
 void StateMirror::StartTimer(int minutes, const std::string& mode) {

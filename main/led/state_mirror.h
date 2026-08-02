@@ -64,6 +64,11 @@ private:
     enum class IdleMode { kDark, kMood, kClock, kCanvas };
 
     void OnDeviceStateChanged(DeviceState previous_state, DeviceState current_state);
+    // Call after any idle-content mutation (SetMood, SetClockEnabled, Canvas*).
+    // If the device is mid-conversation, idle content wouldn't be seen until
+    // it ends, so this gives a brief preview of the new idle_mode_ content
+    // instead, then hands back to live state. Otherwise just re-syncs.
+    void RefreshDisplay();
     void ShowConnectingFrame();
     void ShowListeningFrame();
     void ShowSpeakingFrame();
