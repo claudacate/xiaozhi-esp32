@@ -37,6 +37,10 @@ Canvas::Canvas(int width, int height) : width_(width), height_(height) {
     pixels_.resize(width_ * height_);
 }
 
+bool Canvas::ParseHexColor(const std::string& hex, MatrixColor* out) {
+    return ::ParseHexColor(hex, out);
+}
+
 bool Canvas::Draw(const std::string& palette, const std::string& grid) {
     std::vector<MatrixColor> parsed_palette;
     std::stringstream ss(palette);

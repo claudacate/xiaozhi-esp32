@@ -26,6 +26,9 @@ public:
     // calls ShowLocked() itself afterward.
     void RenderLocked(RgbMatrix* matrix) const;
 
+    // Returns false if `hex` isn't exactly 6 valid hex digits (e.g. "FF8800").
+    static bool ParseHexColor(const std::string& hex, MatrixColor* out);
+
 private:
     int width_;
     int height_;

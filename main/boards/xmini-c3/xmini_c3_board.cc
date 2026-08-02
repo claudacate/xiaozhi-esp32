@@ -7,6 +7,8 @@
 #include "led/rgb_matrix.h"
 #include "led/state_mirror.h"
 #include "led/mood_effects.h"
+#include "led/sprites.h"
+#include "led/canvas.h"
 #include "mcp_server.h"
 #include "settings.h"
 #include "config.h"
@@ -226,6 +228,125 @@ private:
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 state_mirror_->ClearMood();
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.show_clock",
+            "Show a scrolling HH:MM clock on the 8x8 matrix during idle time. Scrolls once per minute, "
+            "plus immediately when first enabled. Replaces any mood/canvas idle content while enabled.",
+            PropertyList({
+                Property("enabled", kPropertyTypeBoolean)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->SetClockEnabled(properties["enabled"].value<bool>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.timer.start",
+            "Start a countdown timer visualized on the 8x8 matrix: fills one pixel at a time (of 64 total), "
+            "color shifting green to amber to red as it nears the end. Announces completion out loud. "
+            "mode is \"pomodoro\" or \"timer\" (only affects the completion message).",
+            PropertyList({
+                Property("minutes", kPropertyTypeInteger, 1, 180),
+                Property("mode", kPropertyTypeString, std::string("timer"))
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->StartTimer(properties["minutes"].value<int>(), properties["mode"].value<std::string>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.timer.cancel",
+            "Cancel the currently running timer or Pomodoro, if any.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->CancelTimer();
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.fortune",
+            "Show a magic-8-ball style animation on the 8x8 matrix: a brief shake, then reveals a symbol. "
+            "Call this alongside speaking the actual answer - the matrix only shows a symbol, not the text. "
+            "symbol should be \"yes\", \"no\", or \"maybe\" based on the answer's sentiment.",
+            PropertyList({
+                Property("answer", kPropertyTypeString),
+                Property("symbol", kPropertyTypeString)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->ShowFortune(properties["answer"].value<std::string>(), properties["symbol"].value<std::string>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.show_weather",
+            "Show the current weather on the 8x8 matrix: an icon for a few seconds, then scrolls the "
+            "temperature. condition should describe the weather (e.g. \"sunny\", \"rainy\", \"cloudy\", "
+            "\"snowy\", \"thunderstorm\"); unrecognized conditions show a generic cloud icon.",
+            PropertyList({
+                Property("condition", kPropertyTypeString),
+                Property("temp_c", kPropertyTypeInteger, -50, 60)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->ShowWeather(properties["condition"].value<std::string>(), properties["temp_c"].value<int>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.canvas.sprite",
+            "Draw a built-in pixel-art icon on the 8x8 matrix as idle content. Prefer this over "
+            "self.canvas.draw whenever the request matches one of these, since it always looks correct: " +
+            std::string(Sprites::Names()),
+            PropertyList({
+                Property("name", kPropertyTypeString)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto name = properties["name"].value<std::string>();
+                if (!state_mirror_->CanvasSprite(name)) {
+                    throw std::runtime_error("Unknown sprite: " + name + ". Valid sprites: " + Sprites::Names());
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.canvas.draw",
+            "Draw freehand pixel art on the 8x8 matrix as idle content, for requests self.canvas.sprite "
+            "can't cover. palette is comma-separated 6-digit hex colors, e.g. \"000000,FF0000,FFFFFF\" "
+            "(up to 16 entries, index 0 is usually background). grid is exactly 64 hex-nibble characters "
+            "(0-9, a-f), one per pixel, row-major from top-left, each indexing into palette. Recognizable "
+            "small icons work well; detailed scenes do not - keep it simple and blocky.",
+            PropertyList({
+                Property("palette", kPropertyTypeString),
+                Property("grid", kPropertyTypeString)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto palette = properties["palette"].value<std::string>();
+                auto grid = properties["grid"].value<std::string>();
+                if (!state_mirror_->CanvasDraw(palette, grid)) {
+                    throw std::runtime_error("Invalid palette or grid: palette must be comma-separated 6-digit "
+                        "hex colors, grid must be exactly 64 hex-nibble characters each indexing into palette.");
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.canvas.set_pixel",
+            "Set a single pixel on the 8x8 matrix canvas, e.g. to add a detail to what's already drawn. "
+            "color is a 6-digit hex string, e.g. \"FF0000\".",
+            PropertyList({
+                Property("x", kPropertyTypeInteger, 0, MATRIX_WIDTH - 1),
+                Property("y", kPropertyTypeInteger, 0, MATRIX_HEIGHT - 1),
+                Property("color", kPropertyTypeString)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                MatrixColor color;
+                auto color_str = properties["color"].value<std::string>();
+                if (!Canvas::ParseHexColor(color_str, &color)) {
+                    throw std::runtime_error("Invalid color: " + color_str + ". Expected a 6-digit hex string, e.g. FF0000.");
+                }
+                state_mirror_->CanvasSetPixel(properties["x"].value<int>(), properties["y"].value<int>(), color);
+                return true;
+            });
+
+        mcp_server.AddTool("self.canvas.clear",
+            "Clear the 8x8 matrix canvas; it goes dark while idle instead.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->CanvasClear();
                 return true;
             });
 
