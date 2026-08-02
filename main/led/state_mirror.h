@@ -2,7 +2,10 @@
 #define _STATE_MIRROR_H_
 
 #include "rgb_matrix.h"
+#include "canvas.h"
 #include "device_state.h"
+#include <esp_timer.h>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -11,42 +14,100 @@
 // (thinking, listening, speaking...), independent of any LLM/voice command.
 // Hooks DeviceStateEventManager, so it needs no changes to application.cc.
 //
-// Also owns idle-time content: when idle and a mood is set (SetMood), the
-// mood's ambient animation plays instead of going dark. Active states
-// (listening/thinking/speaking/error) always take over from the mood and hand
-// back to it once idle again — this is the one place two behaviors currently
-// compete for the panel, so it's resolved here directly rather than via a
-// general priority stack (see SPEC.md 3), which has nothing else to arbitrate
-// yet.
+// Also owns idle-time content, which is mutually exclusive - mood, clock and
+// canvas each replace whichever was showing before (IdleMode). A running
+// Pomodoro/timer is layered on top of that and always wins while it runs.
+// Fortune and weather are transient: they take over the whole panel for a
+// fixed duration regardless of what's showing, then hand back to live state
+// (StartTransient). Active conversation states (listening/thinking/speaking/
+// error) always take priority over all idle content, mirroring the panel's
+// original design.
+//
+// This hand-rolled priority resolution - rather than a fully generic stack -
+// is deliberate: it covers exactly the features that exist, see SPEC.md 3 for
+// why a general mechanism was deferred.
 class StateMirror {
 public:
     explicit StateMirror(RgbMatrix* matrix);
+    ~StateMirror();
 
     void SetEnabled(bool enabled, bool permanent = false);
     bool enabled() const { return enabled_; }
 
-    // Returns false if `mood` is not a name MoodEffects recognizes.
+    // Idle content - mutually exclusive. Setting one replaces whichever was
+    // showing before; clearing one goes dark rather than restoring a prior one.
     bool SetMood(const std::string& mood, uint8_t intensity, bool permanent = true);
     void ClearMood(bool permanent = true);
+    void SetClockEnabled(bool enabled);
+
+    // Returns false if input is malformed or a sprite name isn't recognized.
+    bool CanvasDraw(const std::string& palette, const std::string& grid);
+    bool CanvasSprite(const std::string& name);
+    void CanvasSetPixel(int x, int y, MatrixColor color);
+    void CanvasClear();
+
+    // Pomodoro/timer. Layered on top of idle content while running; the
+    // underlying countdown keeps time regardless of what's on screen.
+    void StartTimer(int minutes, const std::string& mode);
+    void CancelTimer();
+    bool timer_running() const { return timer_running_; }
+
+    // Brief shake, then reveals a symbol (yes/no/maybe -> checkmark/cross/
+    // question); unrecognized symbols default to question. `answer` is not
+    // rendered (the matrix has no font for prose) - Xiaozhi speaks it.
+    void ShowFortune(const std::string& answer, const std::string& symbol);
+    // Shows a weather icon for `condition` (unrecognized -> generic cloud),
+    // then scrolls the temperature.
+    void ShowWeather(const std::string& condition, int temp_c);
 
 private:
+    enum class IdleMode { kDark, kMood, kClock, kCanvas };
+
     void OnDeviceStateChanged(DeviceState previous_state, DeviceState current_state);
     void ShowConnectingFrame();
     void ShowListeningFrame();
     void ShowSpeakingFrame();
     void ShowErrorFrame();
     void ShowMoodFrame();
-    void ShowMoodPreviewFrame();
-    // Idle/boot states: the active mood if one is set, otherwise dark.
+    void ShowClockFrame();
+    void ShowTimerFrame();
+    void ShowCanvasFrame();
+    // Idle/boot states: timer overlay if running, else whichever IdleMode
+    // says, else dark.
     void ShowRest();
 
+    // Runs frame_fn for total_frames ticks at interval_ms (frame_fn must
+    // increment animation_step_ itself and call ShowLocked), then resumes
+    // whatever the live device state calls for. Shared by mood preview,
+    // fortune and weather.
+    void StartTransient(int total_frames, int interval_ms, std::function<void()> frame_fn);
+    void ShowTransientFrame();
+
+    static void TimerCheckCallback(void* arg);
+    void OnTimerCheck();
+
     RgbMatrix* matrix_;
+    Canvas canvas_;
     bool enabled_ = true;
     int animation_step_ = 0;
     std::vector<std::pair<int, int>> perimeter_;
+
     std::string mood_;
     uint8_t mood_intensity_ = 60;
-    int mood_preview_frames_ = 0;
+    IdleMode idle_mode_ = IdleMode::kDark;
+
+    bool clock_scroll_active_ = false;
+    std::string clock_scroll_text_;
+    int clock_last_scrolled_minute_ = -1;
+
+    esp_timer_handle_t timer_check_timer_ = nullptr;
+    bool timer_running_ = false;
+    int64_t timer_start_us_ = 0;
+    int timer_total_seconds_ = 0;
+    std::string timer_mode_;
+
+    std::function<void()> transient_frame_fn_ = nullptr;
+    int transient_frames_remaining_ = 0;
 };
 
 #endif // _STATE_MIRROR_H_
