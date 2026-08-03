@@ -256,7 +256,7 @@ private:
             });
 
         mcp_server.AddTool("self.led_matrix.show_clock",
-            "Show a scrolling HH:MM clock on the 8x8 matrix during idle time. Scrolls once per minute, "
+            "Show a scrolling HH:MM clock on the 8x8 matrix during idle time. Scrolls every 10 seconds, "
             "plus immediately when first enabled. Replaces any mood/canvas idle content while enabled.",
             PropertyList({
                 Property("enabled", kPropertyTypeBoolean)

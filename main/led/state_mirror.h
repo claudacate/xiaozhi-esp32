@@ -96,7 +96,9 @@ private:
 
     bool clock_scroll_active_ = false;
     std::string clock_scroll_text_;
-    int clock_last_scrolled_minute_ = -1;
+    // Start of the last scroll, for the repeat interval. 0 = never scrolled,
+    // which forces one immediately.
+    int64_t clock_last_scroll_us_ = 0;
 
     esp_timer_handle_t timer_check_timer_ = nullptr;
     bool timer_running_ = false;

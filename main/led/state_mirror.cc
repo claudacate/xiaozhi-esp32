@@ -17,6 +17,12 @@
 
 namespace {
 
+// Clock: how long between the start of one scroll of the time and the next.
+const int64_t kClockRepeatUs = 10 * 1000000;
+// Milliseconds per scrolled column. "HH:MM" is 28 frames, so a pass takes
+// about 5.6s.
+const int kClockScrollIntervalMs = 200;
+
 const char* StateName(DeviceState state) {
     switch (state) {
         case kDeviceStateUnknown: return "unknown";
@@ -148,7 +154,7 @@ void StateMirror::SetClockEnabled(bool enabled) {
     if (enabled) {
         idle_mode_ = IdleMode::kClock;
         clock_scroll_active_ = false;
-        clock_last_scrolled_minute_ = -1;  // force an immediate scroll
+        clock_last_scroll_us_ = 0;  // force an immediate scroll
     } else if (idle_mode_ == IdleMode::kClock) {
         idle_mode_ = IdleMode::kDark;
     }
@@ -366,7 +372,7 @@ void StateMirror::ShowRest() {
             break;
         case IdleMode::kClock:
             ESP_LOGI(TAG, "-> rest, clock active");
-            matrix_->StartAnimation(100, [this]() { ShowClockFrame(); });
+            matrix_->StartAnimation(kClockScrollIntervalMs, [this]() { ShowClockFrame(); });
             break;
         case IdleMode::kCanvas:
             ESP_LOGI(TAG, "-> rest, canvas active");
@@ -393,10 +399,6 @@ void StateMirror::ShowMoodFrame() {
 }
 
 void StateMirror::ShowClockFrame() {
-    time_t now = time(nullptr);
-    struct tm tm_now;
-    localtime_r(&now, &tm_now);
-    int minute_id = tm_now.tm_hour * 60 + tm_now.tm_min;
     const MatrixColor kClockColor{0, 220, 255};
 
     if (clock_scroll_active_) {
@@ -405,16 +407,23 @@ void StateMirror::ShowClockFrame() {
         animation_step_++;
         if (animation_step_ >= Marquee::FrameCount(matrix_, clock_scroll_text_)) {
             clock_scroll_active_ = false;
-            clock_last_scrolled_minute_ = minute_id;
         }
         return;
     }
 
-    if (minute_id != clock_last_scrolled_minute_) {
+    // Repeat on a fixed interval rather than once per minute: a single
+    // pass per minute was too easy to miss. Measured from the start of the
+    // previous scroll, so the period is the full cycle.
+    int64_t now_us = esp_timer_get_time();
+    if (clock_last_scroll_us_ == 0 || now_us - clock_last_scroll_us_ >= kClockRepeatUs) {
+        time_t now = time(nullptr);
+        struct tm tm_now;
+        localtime_r(&now, &tm_now);
         char buf[6];
         snprintf(buf, sizeof(buf), "%02d:%02d", tm_now.tm_hour, tm_now.tm_min);
         clock_scroll_text_ = buf;
         clock_scroll_active_ = true;
+        clock_last_scroll_us_ = now_us;
         animation_step_ = 0;
         Marquee::RenderFrame(matrix_, clock_scroll_text_, animation_step_, kClockColor);
         matrix_->ShowLocked();
