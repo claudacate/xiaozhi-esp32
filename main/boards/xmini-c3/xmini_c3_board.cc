@@ -196,6 +196,28 @@ private:
                 return true;
             });
 
+        mcp_server.AddTool("self.led_matrix.turn_on",
+            "Light the whole 8x8 matrix in one solid colour and keep it on, like a lamp. "
+            "color is a 6-digit hex string, e.g. \"FF0000\" for red. brightness is a percentage "
+            "0-100. Replaces any mood/clock/canvas currently showing.",
+            PropertyList({
+                Property("color", kPropertyTypeString),
+                Property("brightness", kPropertyTypeInteger, 50, 0, 100)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                MatrixColor color;
+                auto color_str = properties["color"].value<std::string>();
+                if (!Canvas::ParseHexColor(color_str, &color)) {
+                    throw std::runtime_error("Invalid color: " + color_str + ". Expected a 6-digit hex string, e.g. FF0000.");
+                }
+                // Counterpart to turn_off, which disables the mirror - without this
+                // the fill would be set but never rendered.
+                state_mirror_->SetEnabled(true);
+                matrix_->SetBrightness(properties["brightness"].value<int>(), true);
+                state_mirror_->CanvasFill(color);
+                return true;
+            });
+
         mcp_server.AddTool("self.led_matrix.set_state_mirror",
             "Pause or resume the 8x8 matrix (mood/clock/canvas/timer). Unlike turn_off, resuming shows "
             "whatever was set before (e.g. the mood) rather than requiring it to be set again.",

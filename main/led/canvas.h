@@ -20,6 +20,8 @@ public:
     // Returns false if `name` isn't in the sprite library.
     bool DrawSprite(const std::string& name);
     void SetPixel(int x, int y, MatrixColor color);
+    // Sets every pixel to `color` (whole-panel solid fill).
+    void Fill(MatrixColor color);
     void Clear();
 
     // Pushes the current buffer to the matrix. Caller holds the lock and

@@ -96,6 +96,10 @@ void Canvas::SetPixel(int x, int y, MatrixColor color) {
     pixels_[y * width_ + x] = color;
 }
 
+void Canvas::Fill(MatrixColor color) {
+    std::fill(pixels_.begin(), pixels_.end(), color);
+}
+
 void Canvas::Clear() {
     std::fill(pixels_.begin(), pixels_.end(), MatrixColor());
 }

@@ -184,6 +184,13 @@ void StateMirror::CanvasSetPixel(int x, int y, MatrixColor color) {
     RefreshDisplay();
 }
 
+void StateMirror::CanvasFill(MatrixColor color) {
+    ESP_LOGI(TAG, "CanvasFill: %02X%02X%02X", color.red, color.green, color.blue);
+    canvas_.Fill(color);
+    idle_mode_ = IdleMode::kCanvas;
+    RefreshDisplay();
+}
+
 void StateMirror::CanvasClear() {
     ESP_LOGI(TAG, "CanvasClear");
     canvas_.Clear();

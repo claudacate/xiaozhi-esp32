@@ -41,6 +41,9 @@ public:
     bool CanvasDraw(const std::string& palette, const std::string& grid);
     bool CanvasSprite(const std::string& name);
     void CanvasSetPixel(int x, int y, MatrixColor color);
+    // Whole panel one solid colour, as idle content (replaces mood/clock like
+    // any other canvas content).
+    void CanvasFill(MatrixColor color);
     void CanvasClear();
 
     // Pomodoro/timer. Layered on top of idle content while running; the
