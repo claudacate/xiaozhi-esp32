@@ -255,54 +255,68 @@ void McpServer::ReplyError(int id, const std::string& message) {
 }
 
 void McpServer::GetToolsList(int id, const std::string& cursor) {
-    const int max_payload_size = 8000;
-    std::string json = "{\"tools\":[";
-    
-    bool found_cursor = cursor.empty();
-    auto it = tools_.begin();
-    std::string next_cursor = "";
-    
-    while (it != tools_.end()) {
-        // 如果我们还没有找到起始位置，继续搜索
-        if (!found_cursor) {
-            if ((*it)->name() == cursor) {
-                found_cursor = true;
-            } else {
-                ++it;
-                continue;
-            }
-        }
-        
-        // 添加tool前检查大小
-        std::string tool_json = (*it)->to_json() + ",";
-        if (json.length() + tool_json.length() + 30 > max_payload_size) {
-            // 如果添加这个tool会超出大小限制，设置next_cursor并退出循环
-            next_cursor = (*it)->name();
-            break;
-        }
-        
-        json += tool_json;
-        ++it;
-    }
-    
-    if (json.back() == ',') {
-        json.pop_back();
-    }
-    
-    if (json.back() == '[' && !tools_.empty()) {
-        // 如果没有添加任何tool，返回错误
-        ESP_LOGE(TAG, "tools/list: Failed to add tool %s because of payload size limit", next_cursor.c_str());
-        ReplyError(id, "Failed to add tool " + next_cursor + " because of payload size limit");
-        return;
-    }
+    try {
+        // Lowered from 8000: at 8000 the in-flight string reallocation while
+        // building this payload (needs old+new buffer alive briefly) wants a
+        // contiguous block large enough to fail against this device's free
+        // heap in practice (confirmed: threw std::bad_alloc here in testing).
+        // A smaller cap means more tools/list round trips (cursor pagination
+        // already handles that) but each chunk actually allocates.
+        const int max_payload_size = 2000;
+        std::string json = "{\"tools\":[";
 
-    if (next_cursor.empty()) {
-        json += "]}";
-    } else {
-        json += "],\"nextCursor\":\"" + next_cursor + "\"}";
+        bool found_cursor = cursor.empty();
+        auto it = tools_.begin();
+        std::string next_cursor = "";
+
+        while (it != tools_.end()) {
+            // 如果我们还没有找到起始位置，继续搜索
+            if (!found_cursor) {
+                if ((*it)->name() == cursor) {
+                    found_cursor = true;
+                } else {
+                    ++it;
+                    continue;
+                }
+            }
+
+            // 添加tool前检查大小
+            std::string tool_json = (*it)->to_json() + ",";
+            if (json.length() + tool_json.length() + 30 > max_payload_size) {
+                // 如果添加这个tool会超出大小限制，设置next_cursor并退出循环
+                next_cursor = (*it)->name();
+                break;
+            }
+
+            json += tool_json;
+            ++it;
+        }
+
+        if (json.back() == ',') {
+            json.pop_back();
+        }
+
+        if (json.back() == '[' && !tools_.empty()) {
+            // 如果没有添加任何tool，返回错误
+            ESP_LOGE(TAG, "tools/list: Failed to add tool %s because of payload size limit", next_cursor.c_str());
+            ReplyError(id, "Failed to add tool " + next_cursor + " because of payload size limit");
+            return;
+        }
+
+        if (next_cursor.empty()) {
+            json += "]}";
+        } else {
+            json += "],\"nextCursor\":\"" + next_cursor + "\"}";
+        }
+
+        ReplyResult(id, json);
+    } catch (const std::exception& e) {
+        // Same guard DoToolCall already has: building this payload allocates
+        // heavily (17+ tools' JSON concatenated), and under low free heap an
+        // allocation failure here must not take the whole device down.
+        ESP_LOGE(TAG, "tools/list: %s", e.what());
+        ReplyError(id, e.what());
     }
-    
-    ReplyResult(id, json);
 }
 
 void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* tool_arguments, int stack_size) {
