@@ -232,8 +232,7 @@ private:
         mcp_server.AddTool("self.led_matrix.set_mood",
             "Set an ambient animation on the 8x8 matrix for idle time, e.g. for setting a vibe like "
             "\"focus\" or \"relax\". Valid moods: " + std::string(MoodEffects::ValidMoods()) + ". "
-            "Only shows while idle; is replaced by the matrix's normal listening/thinking/speaking "
-            "reactions while actively in a conversation, then resumes automatically afterward.",
+            "Plays continuously, including during conversation. Replaces any clock/canvas idle content.",
             PropertyList({
                 Property("mood", kPropertyTypeString),
                 Property("intensity", kPropertyTypeInteger, 60, 0, 100)
