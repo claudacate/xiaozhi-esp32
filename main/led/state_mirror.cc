@@ -23,6 +23,16 @@ const int64_t kClockRepeatUs = 10 * 1000000;
 // about 5.6s.
 const int kClockScrollIntervalMs = 200;
 
+// Weather cycles icon -> temperature -> clock, forever. 104ms is the original
+// 80ms slowed by 30% per user feedback that it went by too fast to read.
+const int kWeatherFrameIntervalMs = 104;
+// Icon hold, in ticks: ~3.8s.
+const int kWeatherIconFrames = 37;
+// The clock half scrolls at 2 ticks/column (~208ms) rather than 1, staying
+// close to kClockScrollIntervalMs - a single tick per column here would be
+// ~104ms, the same "too quick to catch" speed the clock was tuned away from.
+const int kWeatherClockTicksPerColumn = 2;
+
 const char* StateName(DeviceState state) {
     switch (state) {
         case kDeviceStateUnknown: return "unknown";
@@ -304,23 +314,16 @@ void StateMirror::ShowWeather(const std::string& condition, int temp_c) {
     } else if (lower.find("rain") != std::string::npos || lower.find("drizzle") != std::string::npos) {
         sprite_name = "rainy";
     }
-    const Sprite* sprite = Sprites::Find(sprite_name);
+    weather_sprite_ = Sprites::Find(sprite_name);
 
     char buf[8];
     snprintf(buf, sizeof(buf), "%dC", temp_c);
-    std::string temp_text = buf;
+    weather_temp_text_ = buf;
+    weather_clock_text_ = CurrentClockText();
 
-    const int kIconFrames = 37;  // ~3s at 80ms/tick
-    int scroll_frames = Marquee::FrameCount(matrix_, temp_text);
-    StartTransient(kIconFrames + scroll_frames, 80, [this, sprite, kIconFrames, temp_text]() {
-        if (animation_step_ < kIconFrames) {
-            Sprites::RenderLocked(matrix_, sprite);
-        } else {
-            Marquee::RenderFrame(matrix_, temp_text, animation_step_ - kIconFrames, {255, 255, 255});
-        }
-        matrix_->ShowLocked();
-        animation_step_++;
-    });
+    animation_step_ = 0;
+    idle_mode_ = IdleMode::kWeather;
+    RefreshDisplay();
 }
 
 void StateMirror::StartTransient(int total_frames, int interval_ms, std::function<void()> frame_fn) {
@@ -378,6 +381,10 @@ void StateMirror::ShowRest() {
             ESP_LOGI(TAG, "-> rest, canvas active");
             matrix_->StartAnimation(500, [this]() { ShowCanvasFrame(); });
             break;
+        case IdleMode::kWeather:
+            ESP_LOGI(TAG, "-> rest, weather active");
+            matrix_->StartAnimation(kWeatherFrameIntervalMs, [this]() { ShowWeatherFrame(); });
+            break;
         case IdleMode::kDark:
         default:
             ESP_LOGI(TAG, "-> rest, dark");
@@ -395,6 +402,45 @@ void StateMirror::ShowMoodFrame() {
         matrix_->Clear();
         return;
     }
+    animation_step_++;
+}
+
+std::string StateMirror::CurrentClockText() const {
+    time_t now = time(nullptr);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%02d:%02d", tm_now.tm_hour, tm_now.tm_min);
+    return buf;
+}
+
+// One cycle is icon -> temperature -> clock; it then restarts, so weather
+// stays up until other idle content replaces it.
+void StateMirror::ShowWeatherFrame() {
+    const MatrixColor kTempColor{255, 255, 255};
+    const MatrixColor kClockColor{0, 220, 255};
+
+    int temp_cols = Marquee::FrameCount(matrix_, weather_temp_text_);
+    int clock_ticks = Marquee::FrameCount(matrix_, weather_clock_text_) * kWeatherClockTicksPerColumn;
+    int icon_end = kWeatherIconFrames;
+    int temp_end = icon_end + temp_cols;
+    int cycle_ticks = temp_end + clock_ticks;
+
+    int step = animation_step_ % cycle_ticks;
+    if (step == 0) {
+        // Re-read at the top of each cycle so the displayed time stays live.
+        weather_clock_text_ = CurrentClockText();
+    }
+
+    if (step < icon_end) {
+        Sprites::RenderLocked(matrix_, weather_sprite_);
+    } else if (step < temp_end) {
+        Marquee::RenderFrame(matrix_, weather_temp_text_, step - icon_end, kTempColor);
+    } else {
+        Marquee::RenderFrame(matrix_, weather_clock_text_,
+                             (step - temp_end) / kWeatherClockTicksPerColumn, kClockColor);
+    }
+    matrix_->ShowLocked();
     animation_step_++;
 }
 
@@ -416,12 +462,7 @@ void StateMirror::ShowClockFrame() {
     // previous scroll, so the period is the full cycle.
     int64_t now_us = esp_timer_get_time();
     if (clock_last_scroll_us_ == 0 || now_us - clock_last_scroll_us_ >= kClockRepeatUs) {
-        time_t now = time(nullptr);
-        struct tm tm_now;
-        localtime_r(&now, &tm_now);
-        char buf[6];
-        snprintf(buf, sizeof(buf), "%02d:%02d", tm_now.tm_hour, tm_now.tm_min);
-        clock_scroll_text_ = buf;
+        clock_scroll_text_ = CurrentClockText();
         clock_scroll_active_ = true;
         clock_last_scroll_us_ = now_us;
         animation_step_ = 0;

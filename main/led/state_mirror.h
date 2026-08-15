@@ -8,11 +8,11 @@
 #include <functional>
 #include <string>
 
-// Owns the external matrix's idle-time content - mood, clock and canvas are
-// mutually exclusive (IdleMode); a running Pomodoro/timer layers on top and
-// always wins while it runs. Fortune and weather are transient: they take
-// over the whole panel for a fixed duration regardless of what's showing,
-// then hand back to live state (StartTransient).
+// Owns the external matrix's idle-time content - mood, clock, canvas and
+// weather are mutually exclusive (IdleMode); a running Pomodoro/timer layers
+// on top and always wins while it runs. Fortune is transient: it takes over
+// the whole panel for a fixed duration regardless of what's showing, then
+// hands back to live state (StartTransient).
 //
 // Hooks DeviceStateEventManager so idle content responds to the device
 // actually going idle, but does NOT animate in response to listening/
@@ -56,12 +56,14 @@ public:
     // question); unrecognized symbols default to question. `answer` is not
     // rendered (the matrix has no font for prose) - Xiaozhi speaks it.
     void ShowFortune(const std::string& answer, const std::string& symbol);
-    // Shows a weather icon for `condition` (unrecognized -> generic cloud),
-    // then scrolls the temperature.
+    // Idle content: cycles weather icon (unrecognized condition -> generic
+    // cloud) -> scrolling temperature -> scrolling clock, repeating until
+    // replaced by other idle content. The temperature is a snapshot - only
+    // the LLM can refresh it - but the clock is re-read every cycle.
     void ShowWeather(const std::string& condition, int temp_c);
 
 private:
-    enum class IdleMode { kDark, kMood, kClock, kCanvas };
+    enum class IdleMode { kDark, kMood, kClock, kCanvas, kWeather };
 
     void OnDeviceStateChanged(DeviceState previous_state, DeviceState current_state);
     // Call after any idle-content mutation (SetMood, SetClockEnabled, Canvas*)
@@ -69,16 +71,19 @@ private:
     void RefreshDisplay();
     void ShowMoodFrame();
     void ShowClockFrame();
+    void ShowWeatherFrame();
     void ShowTimerFrame();
     void ShowCanvasFrame();
+    // "HH:MM" for right now, shared by the clock and weather modes.
+    std::string CurrentClockText() const;
     // Idle/boot states: timer overlay if running, else whichever IdleMode
     // says, else dark.
     void ShowRest();
 
     // Runs frame_fn for total_frames ticks at interval_ms (frame_fn must
     // increment animation_step_ itself and call ShowLocked), then resumes
-    // whatever the live device state calls for. Shared by mood preview,
-    // fortune and weather.
+    // whatever the live device state calls for. Shared by mood preview and
+    // fortune.
     void StartTransient(int total_frames, int interval_ms, std::function<void()> frame_fn);
     void ShowTransientFrame();
 
@@ -93,6 +98,12 @@ private:
     std::string mood_;
     uint8_t mood_intensity_ = 60;
     IdleMode idle_mode_ = IdleMode::kDark;
+
+    // Weather idle content. Deliberately not persisted to NVS like mood is -
+    // a temperature restored from before a reboot would be stale and wrong.
+    const struct Sprite* weather_sprite_ = nullptr;
+    std::string weather_temp_text_;
+    std::string weather_clock_text_;
 
     bool clock_scroll_active_ = false;
     std::string clock_scroll_text_;

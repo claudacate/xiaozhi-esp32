@@ -221,7 +221,8 @@ private:
         // in the first tools/list page even under the MCP payload-size cursor split -
         // these are the ones most likely to be called mid-conversation from voice.
         mcp_server.AddTool("self.led_matrix.show_weather",
-            "Show current weather: icon for a few seconds, then scrolls temperature. condition: "
+            "Show current weather: cycles icon -> temperature -> clock, repeating until other "
+            "idle content (mood/clock/canvas) replaces it. condition: "
             "\"sunny\"/\"rainy\"/\"cloudy\"/\"snowy\"/\"thunderstorm\" (unrecognized -> generic cloud).",
             PropertyList({
                 Property("condition", kPropertyTypeString),
