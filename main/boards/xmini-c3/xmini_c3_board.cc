@@ -197,9 +197,8 @@ private:
             });
 
         mcp_server.AddTool("self.led_matrix.turn_on",
-            "Light the whole 8x8 matrix in one solid colour and keep it on, like a lamp. "
-            "color is a 6-digit hex string, e.g. \"FF0000\" for red. brightness is a percentage "
-            "0-100. Replaces any mood/clock/canvas currently showing.",
+            "Light the whole 8x8 matrix one solid colour, like a lamp. color: 6-digit hex "
+            "(e.g. FF0000). brightness: 0-100%. Replaces any mood/clock/canvas.",
             PropertyList({
                 Property("color", kPropertyTypeString),
                 Property("brightness", kPropertyTypeInteger, 50, 0, 100)
@@ -218,9 +217,48 @@ private:
                 return true;
             });
 
+        // Weather/clock/fortune registered early (right after basic on/off) so they land
+        // in the first tools/list page even under the MCP payload-size cursor split -
+        // these are the ones most likely to be called mid-conversation from voice.
+        mcp_server.AddTool("self.led_matrix.show_weather",
+            "Show current weather: icon for a few seconds, then scrolls temperature. condition: "
+            "\"sunny\"/\"rainy\"/\"cloudy\"/\"snowy\"/\"thunderstorm\" (unrecognized -> generic cloud).",
+            PropertyList({
+                Property("condition", kPropertyTypeString),
+                Property("temp_c", kPropertyTypeInteger, -50, 60)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->ShowWeather(properties["condition"].value<std::string>(), properties["temp_c"].value<int>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.show_clock",
+            "Show a scrolling HH:MM clock during idle time; scrolls every 10s. Replaces "
+            "mood/canvas while enabled.",
+            PropertyList({
+                Property("enabled", kPropertyTypeBoolean)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->SetClockEnabled(properties["enabled"].value<bool>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.led_matrix.fortune",
+            "Magic-8-ball animation: shakes, then reveals a symbol. Call alongside speaking the "
+            "actual answer (matrix shows symbol only). symbol: \"yes\"/\"no\"/\"maybe\" per the "
+            "answer's sentiment.",
+            PropertyList({
+                Property("answer", kPropertyTypeString),
+                Property("symbol", kPropertyTypeString)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                state_mirror_->ShowFortune(properties["answer"].value<std::string>(), properties["symbol"].value<std::string>());
+                return true;
+            });
+
         mcp_server.AddTool("self.led_matrix.set_state_mirror",
-            "Pause or resume the 8x8 matrix (mood/clock/canvas/timer). Unlike turn_off, resuming shows "
-            "whatever was set before (e.g. the mood) rather than requiring it to be set again.",
+            "Pause/resume the 8x8 matrix (mood/clock/canvas/timer). Resuming restores what was "
+            "set before, unlike turn_off.",
             PropertyList({
                 Property("enabled", kPropertyTypeBoolean)
             }),
@@ -230,9 +268,8 @@ private:
             });
 
         mcp_server.AddTool("self.led_matrix.set_mood",
-            "Set an ambient animation on the 8x8 matrix for idle time, e.g. for setting a vibe like "
-            "\"focus\" or \"relax\". Valid moods: " + std::string(MoodEffects::ValidMoods()) + ". "
-            "Plays continuously, including during conversation. Replaces any clock/canvas idle content.",
+            "Set an ambient idle animation (a vibe). Valid moods: " + std::string(MoodEffects::ValidMoods()) + ". "
+            "Plays continuously, even during conversation; replaces clock/canvas.",
             PropertyList({
                 Property("mood", kPropertyTypeString),
                 Property("intensity", kPropertyTypeInteger, 60, 0, 100)
@@ -247,28 +284,17 @@ private:
             });
 
         mcp_server.AddTool("self.led_matrix.clear_mood",
-            "Stop the 8x8 matrix's ambient mood animation; it goes dark while idle instead.",
+            "Stop the mood animation; matrix goes dark while idle.",
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 state_mirror_->ClearMood();
                 return true;
             });
 
-        mcp_server.AddTool("self.led_matrix.show_clock",
-            "Show a scrolling HH:MM clock on the 8x8 matrix during idle time. Scrolls every 10 seconds, "
-            "plus immediately when first enabled. Replaces any mood/canvas idle content while enabled.",
-            PropertyList({
-                Property("enabled", kPropertyTypeBoolean)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                state_mirror_->SetClockEnabled(properties["enabled"].value<bool>());
-                return true;
-            });
-
         mcp_server.AddTool("self.timer.start",
-            "Start a countdown timer visualized on the 8x8 matrix: fills one pixel at a time (of 64 total), "
-            "color shifting green to amber to red as it nears the end. Announces completion out loud. "
-            "mode is \"pomodoro\" or \"timer\" (only affects the completion message).",
+            "Start a countdown timer: fills pixels green to amber to red as it nears the end, "
+            "announces completion aloud. mode: \"pomodoro\" or \"timer\" (affects only the "
+            "completion message).",
             PropertyList({
                 Property("minutes", kPropertyTypeInteger, 1, 180),
                 Property("mode", kPropertyTypeString, std::string("timer"))
@@ -279,42 +305,16 @@ private:
             });
 
         mcp_server.AddTool("self.timer.cancel",
-            "Cancel the currently running timer or Pomodoro, if any.",
+            "Cancel the running timer/Pomodoro, if any.",
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 state_mirror_->CancelTimer();
                 return true;
             });
 
-        mcp_server.AddTool("self.led_matrix.fortune",
-            "Show a magic-8-ball style animation on the 8x8 matrix: a brief shake, then reveals a symbol. "
-            "Call this alongside speaking the actual answer - the matrix only shows a symbol, not the text. "
-            "symbol should be \"yes\", \"no\", or \"maybe\" based on the answer's sentiment.",
-            PropertyList({
-                Property("answer", kPropertyTypeString),
-                Property("symbol", kPropertyTypeString)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                state_mirror_->ShowFortune(properties["answer"].value<std::string>(), properties["symbol"].value<std::string>());
-                return true;
-            });
-
-        mcp_server.AddTool("self.led_matrix.show_weather",
-            "Show the current weather on the 8x8 matrix: an icon for a few seconds, then scrolls the "
-            "temperature. condition should describe the weather (e.g. \"sunny\", \"rainy\", \"cloudy\", "
-            "\"snowy\", \"thunderstorm\"); unrecognized conditions show a generic cloud icon.",
-            PropertyList({
-                Property("condition", kPropertyTypeString),
-                Property("temp_c", kPropertyTypeInteger, -50, 60)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                state_mirror_->ShowWeather(properties["condition"].value<std::string>(), properties["temp_c"].value<int>());
-                return true;
-            });
-
         mcp_server.AddTool("self.canvas.sprite",
-            "Draw a built-in pixel-art icon on the 8x8 matrix as idle content. Prefer this over "
-            "self.canvas.draw whenever the request matches one of these, since it always looks correct: " +
+            "Draw a built-in pixel-art icon as idle content. Prefer over self.canvas.draw when "
+            "the request matches one of: " +
             std::string(Sprites::Names()),
             PropertyList({
                 Property("name", kPropertyTypeString)
@@ -328,11 +328,10 @@ private:
             });
 
         mcp_server.AddTool("self.canvas.draw",
-            "Draw freehand pixel art on the 8x8 matrix as idle content, for requests self.canvas.sprite "
-            "can't cover. palette is comma-separated 6-digit hex colors, e.g. \"000000,FF0000,FFFFFF\" "
-            "(up to 16 entries, index 0 is usually background). grid is exactly 64 hex-nibble characters "
-            "(0-9, a-f), one per pixel, row-major from top-left, each indexing into palette. Recognizable "
-            "small icons work well; detailed scenes do not - keep it simple and blocky.",
+            "Draw freehand pixel art as idle content, when self.canvas.sprite doesn't cover it. "
+            "palette: comma-separated 6-digit hex colors (e.g. \"000000,FF0000,FFFFFF\", up to 16, "
+            "index 0 = background). grid: 64 hex-nibble chars (0-9,a-f), one per pixel, row-major "
+            "from top-left, indexing palette. Keep icons simple/blocky, not detailed scenes.",
             PropertyList({
                 Property("palette", kPropertyTypeString),
                 Property("grid", kPropertyTypeString)
@@ -348,8 +347,7 @@ private:
             });
 
         mcp_server.AddTool("self.canvas.set_pixel",
-            "Set a single pixel on the 8x8 matrix canvas, e.g. to add a detail to what's already drawn. "
-            "color is a 6-digit hex string, e.g. \"FF0000\".",
+            "Set a single canvas pixel, e.g. to add a detail. color: 6-digit hex (e.g. FF0000).",
             PropertyList({
                 Property("x", kPropertyTypeInteger, 0, MATRIX_WIDTH - 1),
                 Property("y", kPropertyTypeInteger, 0, MATRIX_HEIGHT - 1),
@@ -366,7 +364,7 @@ private:
             });
 
         mcp_server.AddTool("self.canvas.clear",
-            "Clear the 8x8 matrix canvas; it goes dark while idle instead.",
+            "Clear the canvas; goes dark while idle.",
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 state_mirror_->CanvasClear();
@@ -375,7 +373,7 @@ private:
 
         // Bring-up helpers: prove the wiring and establish the panel's layout.
         mcp_server.AddTool("self.led_matrix.test_pattern",
-            "Run a test pattern on the 8x8 LED matrix to verify it is working.",
+            "Run a test pattern to verify the matrix works.",
             PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 matrix_->StartTestPattern();
@@ -383,7 +381,7 @@ private:
             });
 
         mcp_server.AddTool("self.led_matrix.probe_pixel",
-            "Light a single LED of the 8x8 matrix by its raw index, to determine the panel layout.",
+            "Light a single LED by raw index, to determine panel layout.",
             PropertyList({
                 Property("index", kPropertyTypeInteger, 0, MATRIX_WIDTH * MATRIX_HEIGHT - 1)
             }),
@@ -399,8 +397,8 @@ private:
 
         auto& mcp_server = McpServer::GetInstance();
         mcp_server.AddTool("self.set_press_to_talk",
-            "Switch between press to talk mode (长按说话) and click to talk mode (单击说话).\n"
-            "The mode can be `press_to_talk` or `click_to_talk`.",
+            "Switch talk mode: press-to-talk (长按说话) or click-to-talk (单击说话). "
+            "mode: `press_to_talk`/`click_to_talk`.",
             PropertyList({
                 Property("mode", kPropertyTypeString)
             }),
