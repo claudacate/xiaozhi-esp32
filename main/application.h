@@ -60,6 +60,18 @@ public:
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
 
+    // Quiet mode - the sunrise alarm's lockout (SPEC.md 4.7.6). Three layers:
+    // wake-word/chat entry points return early, the mic is disabled, and the
+    // audio channel is closed at the next Idle transition (deferred, so the
+    // assistant's own confirmation is not truncated mid-sentence). Also
+    // suppresses the boot chime, so a crash-reboot at 3am stays silent.
+    void SetQuietMode(bool quiet);
+    bool quiet_mode() const { return quiet_mode_; }
+    // Whether the server supplied a wall clock this boot. The sunrise alarm
+    // must not arm or fire without it - an unset clock reads as 1970 and would
+    // fire the alarm instantly at full brightness.
+    bool has_server_time() const { return has_server_time_; }
+
 private:
     Application();
     ~Application();
@@ -76,6 +88,8 @@ private:
     AudioService audio_service_;
 
     bool has_server_time_ = false;
+    bool quiet_mode_ = false;
+    bool quiet_close_pending_ = false;
     bool aborted_ = false;
     int clock_ticks_ = 0;
     TaskHandle_t check_new_version_task_handle_ = nullptr;

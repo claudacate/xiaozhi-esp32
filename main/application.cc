@@ -8,6 +8,7 @@
 #include "font_awesome_symbols.h"
 #include "assets/lang_config.h"
 #include "mcp_server.h"
+#include "settings.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -225,6 +226,10 @@ void Application::DismissAlert() {
 }
 
 void Application::ToggleChatState() {
+    if (quiet_mode_) {
+        ESP_LOGI(TAG, "Quiet mode: ignoring ToggleChatState");
+        return;
+    }
     if (device_state_ == kDeviceStateActivating) {
         SetDeviceState(kDeviceStateIdle);
         return;
@@ -266,6 +271,10 @@ void Application::ToggleChatState() {
 }
 
 void Application::StartListening() {
+    if (quiet_mode_) {
+        ESP_LOGI(TAG, "Quiet mode: ignoring StartListening");
+        return;
+    }
     if (device_state_ == kDeviceStateActivating) {
         SetDeviceState(kDeviceStateIdle);
         return;
@@ -360,6 +369,19 @@ void Application::Start() {
     // Check for new firmware version or get the MQTT broker address
     Ota ota;
     CheckNewVersion(ota);
+
+    // Restore quiet mode here, deliberately: CheckNewVersion has just set the
+    // wall clock, the board is fully constructed, and neither the protocol nor
+    // the boot chime has happened yet. A crash-reboot mid-alarm must not
+    // announce itself at 3am (SPEC.md 4.7.5a items 1-2). Read straight from
+    // NVS rather than through the board, which keeps this board-agnostic.
+    {
+        Settings settings("matrix");
+        if (settings.GetInt("quiet", 0) != 0) {
+            ESP_LOGI(TAG, "Sunrise alarm was armed before reboot; restoring quiet mode");
+            SetQuietMode(true);
+        }
+    }
 
     // Initialize the protocol
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
@@ -495,11 +517,18 @@ void Application::Start() {
 
     has_server_time_ = ota.HasServerTime();
     if (protocol_started) {
-        std::string message = std::string(Lang::Strings::VERSION) + ota.GetCurrentVersion();
-        display->ShowNotification(message.c_str());
         display->SetChatMessage("system", "");
-        // Play the success sound to indicate the device is ready
-        audio_service_.PlaySound(Lang::Sounds::P3_SUCCESS);
+        if (quiet_mode_) {
+            // Restored from NVS before we got here: a crash-reboot mid-alarm
+            // must not chime and light the screen at 3am. This is the only
+            // defence against that - see SPEC.md 4.7.5a item 1.
+            ESP_LOGI(TAG, "Quiet mode: suppressing boot notification and chime");
+        } else {
+            std::string message = std::string(Lang::Strings::VERSION) + ota.GetCurrentVersion();
+            display->ShowNotification(message.c_str());
+            // Play the success sound to indicate the device is ready
+            audio_service_.PlaySound(Lang::Sounds::P3_SUCCESS);
+        }
     }
 
     // Print heap stats
@@ -584,6 +613,10 @@ void Application::OnWakeWordDetected() {
     if (!protocol_) {
         return;
     }
+    if (quiet_mode_) {
+        ESP_LOGI(TAG, "Quiet mode: ignoring wake word");
+        return;
+    }
 
     if (device_state_ == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
@@ -652,7 +685,20 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetStatus(Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            audio_service_.EnableWakeWordDetection(!quiet_mode_);
+            if (quiet_mode_ && quiet_close_pending_) {
+                // Layer 3, deferred to here on purpose: closing the channel
+                // inside the tool handler would cut off the assistant's
+                // confirmation. Scheduled rather than called inline to avoid
+                // re-entering SetDeviceState from OnAudioChannelClosed.
+                quiet_close_pending_ = false;
+                Schedule([this]() {
+                    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                        ESP_LOGI(TAG, "Quiet mode: closing audio channel");
+                        protocol_->CloseAudioChannel();
+                    }
+                });
+            }
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -691,12 +737,43 @@ void Application::SetDeviceState(DeviceState state) {
     }
 }
 
+void Application::SetQuietMode(bool quiet) {
+    if (quiet_mode_ == quiet) {
+        return;
+    }
+    quiet_mode_ = quiet;
+    ESP_LOGI(TAG, "Quiet mode %s", quiet ? "ON" : "OFF");
+
+    auto codec = Board::GetInstance().GetAudioCodec();
+    if (quiet) {
+        audio_service_.EnableWakeWordDetection(false);
+        if (codec != nullptr) {
+            // Layer 2: kill local false wakes at the source. Same lever
+            // PowerSaveTimer::OnEnterSleepMode already uses on this board.
+            codec->EnableInput(false);
+        }
+        quiet_close_pending_ = true;
+    } else {
+        quiet_close_pending_ = false;
+        if (codec != nullptr) {
+            codec->EnableInput(true);
+        }
+        if (device_state_ == kDeviceStateIdle) {
+            audio_service_.EnableWakeWordDetection(true);
+        }
+    }
+}
+
 void Application::Reboot() {
     ESP_LOGI(TAG, "Rebooting...");
     esp_restart();
 }
 
 void Application::WakeWordInvoke(const std::string& wake_word) {
+    if (quiet_mode_) {
+        ESP_LOGI(TAG, "Quiet mode: ignoring WakeWordInvoke");
+        return;
+    }
     if (device_state_ == kDeviceStateIdle) {
         ToggleChatState();
         Schedule([this, wake_word]() {

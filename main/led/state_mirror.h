@@ -43,6 +43,27 @@ public:
     // The only surviving canvas entry point - lamp mode (SPEC.md 4.0).
     void CanvasFill(MatrixColor color);
 
+    // Sunrise alarm (SPEC.md 4.7). `time_hhmm` is local "HH:MM"; the alarm
+    // targets the next occurrence of it. The ramp PEAKS kLightLeadMinutes
+    // before that time and holds, so the light gets a silent solo window
+    // before the clip sounds at the time itself. Arming engages quiet mode -
+    // the device stops answering until the alarm finishes.
+    // Returns false and fills *error if the clock isn't set yet or HH:MM is
+    // malformed; both are reported to the user rather than guessed at.
+    bool SetSunriseAlarm(const std::string& time_hhmm, int ramp_minutes, std::string* error);
+    // Cancels an armed or sounding alarm and lifts quiet mode, from any state.
+    // The BOOT long-press path - and the only cancel route there is, since
+    // quiet mode makes a voice cancel unreachable by construction.
+    void CancelSunriseAlarm();
+    bool quiet_active() const { return quiet_active_; }
+    // Brief visible flash confirming a long-press cancel. Needed because the
+    // cancel happens while the device is muted and the OLED is off, so this is
+    // the only feedback available.
+    void ShowCancelAck();
+    // Board hook, called when quiet mode engages/lifts. The board blanks its
+    // own display from here; the panel handle lives there, not in this class.
+    void SetQuietModeCallback(std::function<void(bool)> cb) { quiet_cb_ = std::move(cb); }
+
     // Pomodoro/timer. Layered on top of idle content while running; the
     // underlying countdown keeps time regardless of what's on screen.
     void StartTimer(int minutes, const std::string& mode);
@@ -56,13 +77,24 @@ public:
     void ShowWeather(const std::string& condition, int temp_c);
 
 private:
-    enum class IdleMode { kDark, kMood, kClock, kCanvas, kWeather };
+    enum class IdleMode { kDark, kMood, kClock, kCanvas, kWeather, kSunrise };
 
     void OnDeviceStateChanged(DeviceState previous_state, DeviceState current_state);
     // Call after any idle-content mutation (SetMood, SetClockEnabled, Canvas*)
     // to re-render immediately with whatever's live right now.
     void RefreshDisplay();
     void ShowMoodFrame();
+    // Reads the wall clock every frame rather than tracking elapsed ticks, so
+    // a reboot mid-ramp resumes at the correct point on the curve for free.
+    void ShowSunriseFrame();
+    void EvaluateAlarm();
+    void FireAlarm();
+    void ReleaseAlarm(const char* why);
+    void EnterQuiet(bool quiet);
+    void SaveAlarm();
+    // The 1 Hz check is shared by the countdown and the alarm; it runs while
+    // either needs it and stops when neither does.
+    void UpdateCheckTimer();
     void ShowClockFrame();
     void ShowAnalogueClockFrame();
     void ShowWeatherFrame();
@@ -110,6 +142,18 @@ private:
     // Start of the last scroll, for the repeat interval. 0 = never scrolled,
     // which forces one immediately.
     int64_t clock_last_scroll_us_ = 0;
+
+    // Sunrise alarm. alarm_target_ is an absolute local epoch (0 = disarmed),
+    // persisted as a decimal string - Settings::SetInt is 32-bit and a Unix
+    // epoch stops fitting in 2038.
+    time_t alarm_target_ = 0;
+    int alarm_ramp_minutes_ = 30;
+    bool alarm_sounding_ = false;
+    bool alarm_flash_active_ = false;
+    bool quiet_active_ = false;
+    bool alarm_no_clock_warned_ = false;
+    IdleMode idle_mode_saved_ = IdleMode::kDark;
+    std::function<void(bool)> quiet_cb_;
 
     esp_timer_handle_t timer_check_timer_ = nullptr;
     bool timer_running_ = false;

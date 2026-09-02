@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <esp_log.h>
 #include <esp_random.h>
@@ -33,6 +34,29 @@ const int kWeatherIconFrames = 37;
 // close to kClockScrollIntervalMs - a single tick per column here would be
 // ~104ms, the same "too quick to catch" speed the clock was tuned away from.
 const int kWeatherClockTicksPerColumn = 2;
+
+// Sunrise alarm (SPEC.md 4.7.4/4.7.6). The ramp peaks kLightLeadMinutes BEFORE
+// the set time and holds, buying the light a silent solo window - otherwise
+// light and sound land together and the chime does all the waking.
+const int kLightLeadMinutes = 5;
+const int kHoldMinutes = 10;
+// A reboot later than this past the target means the alarm was missed; fire
+// within it, clear silently beyond it.
+const int kCatchUpGraceMinutes = 15;
+const int kSunriseFrameMs = 1000;
+// Perceptual correction. WS2812 output is ~linear in PWM duty but perceived
+// lightness goes as luminance^(1/3), so a linear drive ramp is front-loaded -
+// half the apparent brightness arrives while the sleeper is deepest, then it
+// appears to stall. ^2.2 flattens that out.
+const float kRampGamma = 2.2f;
+// Chroma path at UNIT intensity - deliberately separate from the envelope so
+// colour and brightness stay independently tunable (SPEC.md 4.7.4).
+const float kDawnFrom[3] = {1.00f, 0.00f, 0.00f};   // deep red
+const float kDawnTo[3]   = {1.00f, 0.706f, 0.431f}; // warm white (255,180,110)
+// One dim pixel while armed but not yet ramping: the panel is otherwise dark
+// all night, and once quiet mode engages this is the only confirmation the
+// alarm is set that the user can still get.
+const MatrixColor kArmedDot{12, 4, 0};
 
 const char* StateName(DeviceState state) {
     switch (state) {
@@ -89,6 +113,22 @@ StateMirror::StateMirror(RgbMatrix* matrix)
     // Clock and canvas are session conveniences, not persisted preferences;
     // only mood carries across a reboot.
     idle_mode_ = mood_.empty() ? IdleMode::kDark : IdleMode::kMood;
+
+    // Restore a pending alarm. Deliberately does NOT touch Application or
+    // Board here: this runs inside the board's own constructor, so calling
+    // Board::GetInstance() would recurse into a half-built object. Quiet mode
+    // is re-applied by Application::Start() once the board is complete and
+    // before the protocol or the boot chime - see SPEC.md 4.7.5a items 1-2.
+    alarm_target_ = static_cast<time_t>(
+        strtoll(settings.GetString("alarm_target", "0").c_str(), nullptr, 10));
+    alarm_ramp_minutes_ = settings.GetInt("alarm_ramp", 30);
+    quiet_active_ = settings.GetInt("quiet", 0) != 0;
+    if (alarm_target_ != 0) {
+        ESP_LOGI(TAG, "Restored sunrise alarm: target=%lld ramp=%dmin quiet=%d",
+            static_cast<long long>(alarm_target_), alarm_ramp_minutes_, quiet_active_);
+        idle_mode_saved_ = idle_mode_;
+        idle_mode_ = IdleMode::kSunrise;
+    }
 
     esp_timer_create_args_t timer_check_args = {
         .callback = &StateMirror::TimerCheckCallback,
@@ -181,6 +221,214 @@ void StateMirror::CanvasFill(MatrixColor color) {
     RefreshDisplay();
 }
 
+bool StateMirror::SetSunriseAlarm(const std::string& time_hhmm, int ramp_minutes,
+                                  std::string* error) {
+    // No clock means no computable release time, i.e. a permanent mute. Refuse
+    // rather than arm something that cannot end (SPEC.md 4.7.7 item 3).
+    if (!Application::GetInstance().has_server_time()) {
+        *error = "I don't know what time it is yet - the clock hasn't synced. Try again in a moment.";
+        return false;
+    }
+
+    int hh = -1, mm = -1;
+    if (sscanf(time_hhmm.c_str(), "%d:%d", &hh, &mm) != 2 ||
+        hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+        *error = "I couldn't read '" + time_hhmm + "' as a time. Use HH:MM, like 06:30.";
+        return false;
+    }
+
+    if (ramp_minutes < 5) ramp_minutes = 5;
+    if (ramp_minutes > 60) ramp_minutes = 60;
+
+    time_t now = time(nullptr);
+    struct tm tm_target;
+    localtime_r(&now, &tm_target);
+    tm_target.tm_hour = hh;
+    tm_target.tm_min = mm;
+    tm_target.tm_sec = 0;
+    time_t target = mktime(&tm_target);
+    if (target <= now) {
+        target += 24 * 60 * 60;   // already gone today -> tomorrow
+    }
+
+    // Both mean "the device will interrupt you later"; having two armed at
+    // once is a bug, not a feature (SPEC.md 4.7.5a item 6).
+    if (timer_running_) {
+        ESP_LOGI(TAG, "Sunrise armed - cancelling the running timer/Pomodoro");
+        timer_running_ = false;
+    }
+
+    alarm_target_ = target;
+    alarm_ramp_minutes_ = ramp_minutes;
+    alarm_sounding_ = false;
+    alarm_no_clock_warned_ = false;
+    if (idle_mode_ != IdleMode::kSunrise) {
+        idle_mode_saved_ = idle_mode_;
+    }
+    idle_mode_ = IdleMode::kSunrise;
+    // Counterpart to turn_off, exactly as turn_on needs: without this a prior
+    // turn_off leaves the mirror disabled and the alarm silently shows nothing.
+    enabled_ = true;
+
+    ESP_LOGI(TAG, "SetSunriseAlarm: %02d:%02d in %lld s, ramp %d min, peak %d min early",
+        hh, mm, static_cast<long long>(target - now), ramp_minutes, kLightLeadMinutes);
+
+    SaveAlarm();
+    EnterQuiet(true);
+    UpdateCheckTimer();
+    RefreshDisplay();
+    return true;
+}
+
+void StateMirror::CancelSunriseAlarm() {
+    if (alarm_target_ == 0 && !alarm_sounding_ && !quiet_active_) {
+        return;
+    }
+    ReleaseAlarm("cancelled");
+}
+
+void StateMirror::SaveAlarm() {
+    Settings settings("matrix", true);
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(alarm_target_));
+    settings.SetString("alarm_target", buf);
+    settings.SetInt("alarm_ramp", alarm_ramp_minutes_);
+}
+
+void StateMirror::EnterQuiet(bool quiet) {
+    if (quiet_active_ == quiet) {
+        return;
+    }
+    quiet_active_ = quiet;
+    Application::GetInstance().SetQuietMode(quiet);
+    if (quiet_cb_) {
+        quiet_cb_(quiet);
+    }
+    Settings settings("matrix", true);
+    settings.SetInt("quiet", quiet ? 1 : 0);
+}
+
+void StateMirror::ReleaseAlarm(const char* why) {
+    ESP_LOGI(TAG, "Sunrise alarm released: %s", why);
+    alarm_target_ = 0;
+    alarm_sounding_ = false;
+    alarm_no_clock_warned_ = false;
+    SaveAlarm();
+    EnterQuiet(false);
+    if (idle_mode_ == IdleMode::kSunrise) {
+        idle_mode_ = idle_mode_saved_;
+    }
+    UpdateCheckTimer();
+    RefreshDisplay();
+}
+
+void StateMirror::FireAlarm() {
+    ESP_LOGI(TAG, "Sunrise alarm firing");
+    alarm_sounding_ = true;
+    Application::GetInstance().PlaySound(Lang::Sounds::P3_ALARM);
+}
+
+void StateMirror::EvaluateAlarm() {
+    if (alarm_target_ == 0 && !alarm_sounding_) {
+        return;
+    }
+
+    auto& app = Application::GetInstance();
+    if (!app.has_server_time()) {
+        // Hold armed but do not evaluate: an unsynced clock reads as 1970 and
+        // "now >= target" would fire instantly, at full brightness, at night.
+        if (!alarm_no_clock_warned_) {
+            ESP_LOGW(TAG, "Sunrise alarm armed but the clock is not set; holding");
+            alarm_no_clock_warned_ = true;
+        }
+        return;
+    }
+
+    time_t now = time(nullptr);
+
+    if (alarm_sounding_) {
+        if (now >= alarm_target_ + kHoldMinutes * 60) {
+            ReleaseAlarm("hold expired");
+            return;
+        }
+        // Re-arm on idle rather than on a period: PlaySound queues, so a fixed
+        // interval would grow the decode queue without bound.
+        if (app.GetAudioService().IsIdle()) {
+            app.PlaySound(Lang::Sounds::P3_ALARM);
+        }
+        return;
+    }
+
+    if (now >= alarm_target_) {
+        if (now > alarm_target_ + kCatchUpGraceMinutes * 60) {
+            // Missed - most likely the device was off. Clear it rather than
+            // firing hours late, and log it: a silently missed alarm is the
+            // thing you most want to find afterwards.
+            ESP_LOGW(TAG, "Sunrise alarm missed by %lld s - clearing without firing",
+                static_cast<long long>(now - alarm_target_));
+            ReleaseAlarm("missed");
+        } else {
+            FireAlarm();
+        }
+    }
+}
+
+void StateMirror::ShowSunriseFrame() {
+    matrix_->FillLocked(MatrixColor());
+
+    time_t now = time(nullptr);
+    time_t peak = alarm_target_ - kLightLeadMinutes * 60;
+    time_t start = peak - static_cast<time_t>(alarm_ramp_minutes_) * 60;
+
+    if (alarm_target_ == 0 && !alarm_sounding_) {
+        // Shouldn't happen (ReleaseAlarm restores the previous idle mode), but
+        // fail dark rather than lighting the whole panel warm white, which is
+        // both wrong and the power worst case.
+        matrix_->ShowLocked();
+        return;
+    }
+
+    float f;
+    if (alarm_sounding_ || now >= peak) {
+        f = 1.0f;
+    } else if (now <= start) {
+        f = 0.0f;
+    } else {
+        f = static_cast<float>(now - start) / static_cast<float>(peak - start);
+    }
+
+    if (f <= 0.0f) {
+        // Armed, ramp not started: one dim pixel, bottom-left.
+        matrix_->SetPixelLocked(0, matrix_->height() - 1, kArmedDot);
+        matrix_->ShowLocked();
+        return;
+    }
+
+    float env = powf(f, kRampGamma);
+    float r = kDawnFrom[0] + (kDawnTo[0] - kDawnFrom[0]) * f;
+    float g = kDawnFrom[1] + (kDawnTo[1] - kDawnFrom[1]) * f;
+    float b = kDawnFrom[2] + (kDawnTo[2] - kDawnFrom[2]) * f;
+
+    int width = matrix_->width();
+    int height = matrix_->height();
+    for (int y = 0; y < height; y++) {
+        // Bottom-up horizon: the lowest row lights first. Also halves average
+        // current through the first half of the ramp.
+        float row = f * height - static_cast<float>(height - 1 - y);
+        if (row <= 0.0f) continue;
+        if (row > 1.0f) row = 1.0f;
+        float v = env * row * 255.0f;
+        MatrixColor color{
+            static_cast<uint8_t>(r * v),
+            static_cast<uint8_t>(g * v),
+            static_cast<uint8_t>(b * v)};
+        for (int x = 0; x < width; x++) {
+            matrix_->SetPixelLocked(x, y, color);
+        }
+    }
+    matrix_->ShowLocked();
+}
+
 void StateMirror::RefreshDisplay() {
     auto state = Application::GetInstance().GetDeviceState();
     OnDeviceStateChanged(state, state);
@@ -192,7 +440,7 @@ void StateMirror::StartTimer(int minutes, const std::string& mode) {
     timer_start_us_ = esp_timer_get_time();
     timer_mode_ = mode;
     timer_running_ = true;
-    esp_timer_start_periodic(timer_check_timer_, 1000000);
+    UpdateCheckTimer();
 
     auto state = Application::GetInstance().GetDeviceState();
     OnDeviceStateChanged(state, state);
@@ -204,7 +452,7 @@ void StateMirror::CancelTimer() {
     }
     ESP_LOGI(TAG, "CancelTimer");
     timer_running_ = false;
-    esp_timer_stop(timer_check_timer_);
+    UpdateCheckTimer();
 
     auto state = Application::GetInstance().GetDeviceState();
     OnDeviceStateChanged(state, state);
@@ -215,18 +463,37 @@ void StateMirror::TimerCheckCallback(void* arg) {
 }
 
 void StateMirror::OnTimerCheck() {
-    if (!timer_running_) {
-        return;
-    }
-    int64_t elapsed_us = esp_timer_get_time() - timer_start_us_;
-    if (elapsed_us >= static_cast<int64_t>(timer_total_seconds_) * 1000000) {
-        ESP_LOGI(TAG, "Timer complete");
-        timer_running_ = false;
-        esp_timer_stop(timer_check_timer_);
-        const char* message = timer_mode_ == "pomodoro" ? "Pomodoro session complete!" : "Timer's up!";
-        Application::GetInstance().Alert("Timer", message, "happy", Lang::Sounds::P3_SUCCESS);
+    if (timer_running_) {
+        int64_t elapsed_us = esp_timer_get_time() - timer_start_us_;
+        if (elapsed_us >= static_cast<int64_t>(timer_total_seconds_) * 1000000) {
+            ESP_LOGI(TAG, "Timer complete");
+            timer_running_ = false;
+            UpdateCheckTimer();
+            const char* message = timer_mode_ == "pomodoro" ? "Pomodoro session complete!" : "Timer's up!";
+            // Same clip as the sunrise - one alarm sound for the device.
+            Application::GetInstance().Alert("Timer", message, "happy", Lang::Sounds::P3_ALARM);
 
-        ShowAlarmFlash();
+            ShowAlarmFlash();
+        }
+    }
+
+    // The countdown flash repeats the clip for its own duration only; it is
+    // not under quiet mode, so an unattended forever-alarm would be a nuisance
+    // rather than a safeguard. Re-armed on IsIdle() because PlaySound QUEUES
+    // rather than restarts - a fixed interval would grow the decode queue.
+    if (transient_frames_remaining_ > 0 && alarm_flash_active_ &&
+        Application::GetInstance().GetAudioService().IsIdle()) {
+        Application::GetInstance().PlaySound(Lang::Sounds::P3_ALARM);
+    }
+
+    EvaluateAlarm();
+}
+
+void StateMirror::UpdateCheckTimer() {
+    bool want = timer_running_ || alarm_target_ != 0 || alarm_sounding_;
+    esp_timer_stop(timer_check_timer_);
+    if (want) {
+        esp_timer_start_periodic(timer_check_timer_, 1000000);
     }
 }
 
@@ -236,8 +503,18 @@ void StateMirror::ShowAlarmFlash() {
     const int kFlashIntervalMs = 250;
     const int kFlashFrames = 10000 / kFlashIntervalMs;  // ~10s, or until a real state change (e.g. wake word) preempts it
 
+    alarm_flash_active_ = true;
     StartTransient(kFlashFrames, kFlashIntervalMs, [this, kRedHalf, kBlueHalf]() {
         matrix_->FillLocked(animation_step_ % 2 == 0 ? kRedHalf : kBlueHalf);
+        matrix_->ShowLocked();
+        animation_step_++;
+    });
+}
+
+void StateMirror::ShowCancelAck() {
+    const MatrixColor kAck{60, 60, 60};
+    StartTransient(6, 120, [this, kAck]() {
+        matrix_->FillLocked(animation_step_ % 2 == 0 ? kAck : MatrixColor());
         matrix_->ShowLocked();
         animation_step_++;
     });
@@ -284,6 +561,7 @@ void StateMirror::ShowTransientFrame() {
         transient_frames_remaining_--;
         return;
     }
+    alarm_flash_active_ = false;
     ESP_LOGI(TAG, "Transient done, resuming live state");
     auto state = Application::GetInstance().GetDeviceState();
     OnDeviceStateChanged(state, state);
@@ -306,6 +584,13 @@ void StateMirror::OnDeviceStateChanged(DeviceState previous_state, DeviceState c
 }
 
 void StateMirror::ShowRest() {
+    // Sunrise outranks the countdown overlay: a forgotten Pomodoro must not
+    // cover the alarm.
+    if (idle_mode_ == IdleMode::kSunrise) {
+        ESP_LOGI(TAG, "-> rest, sunrise alarm active");
+        matrix_->StartAnimation(kSunriseFrameMs, [this]() { ShowSunriseFrame(); });
+        return;
+    }
     if (timer_running_) {
         ESP_LOGI(TAG, "-> rest, timer/pomodoro active");
         matrix_->StartAnimation(200, [this]() { ShowTimerFrame(); });

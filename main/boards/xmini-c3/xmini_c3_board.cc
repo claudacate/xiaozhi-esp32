@@ -147,6 +147,19 @@ private:
                 app.ToggleChatState();
             }
         });
+        // The ONLY way to cancel a sunrise alarm: quiet mode makes a voice
+        // cancel unreachable by construction, so this path is never gated and
+        // acknowledges itself visibly (there is no audio feedback while muted).
+        boot_button_.OnLongPress([this]() {
+            if (state_mirror_ == nullptr) {
+                return;
+            }
+            if (state_mirror_->quiet_active()) {
+                ESP_LOGI(TAG, "Long press: cancelling sunrise alarm");
+                state_mirror_->CancelSunriseAlarm();
+                state_mirror_->ShowCancelAck();
+            }
+        });
         boot_button_.OnPressDown([this]() {
             if (power_save_timer_) {
                 power_save_timer_->WakeUp();
@@ -166,6 +179,17 @@ private:
         matrix_ = new RgbMatrix(MATRIX_LED_GPIO, MATRIX_WIDTH, MATRIX_HEIGHT, MATRIX_SERPENTINE, MATRIX_ROTATION_CCW_STEPS);
         matrix_->Clear();
         state_mirror_ = new StateMirror(matrix_);
+        // The SSD1306 has no backlight, so "dim" is not available - the panel
+        // is switched off outright. It is the brightest emitter on the device
+        // and shows status nobody reads at 3am.
+        state_mirror_->SetQuietModeCallback([this](bool quiet) {
+            if (panel_ != nullptr) {
+                esp_lcd_panel_disp_on_off(panel_, !quiet);
+            }
+        });
+        if (state_mirror_->quiet_active() && panel_ != nullptr) {
+            esp_lcd_panel_disp_on_off(panel_, false);   // restored across a reboot
+        }
     }
 
     void InitializeMatrixTools() {
@@ -229,6 +253,24 @@ private:
             }),
             [this](const PropertyList& properties) -> ReturnValue {
                 state_mirror_->ShowWeather(properties["condition"].value<std::string>(), properties["temp_c"].value<int>());
+                return true;
+            });
+
+        mcp_server.AddTool("self.alarm.set_sunrise",
+            "Set a wake-up light. The matrix ramps deep red to warm white over ramp_minutes, "
+            "reaching full brightness 5 minutes before time, then an alarm sounds at time and "
+            "holds for 10 minutes. THE DEVICE STOPS RESPONDING TO VOICE as soon as this is set, "
+            "until the alarm finishes - long-press the button to cancel. time is 24-hour \"HH:MM\".",
+            PropertyList({
+                Property("time", kPropertyTypeString),
+                Property("ramp_minutes", kPropertyTypeInteger, 30, 5, 60)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string error;
+                if (!state_mirror_->SetSunriseAlarm(properties["time"].value<std::string>(),
+                                                    properties["ramp_minutes"].value<int>(), &error)) {
+                    throw std::runtime_error(error);
+                }
                 return true;
             });
 
