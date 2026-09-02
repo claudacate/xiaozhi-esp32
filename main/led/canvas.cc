@@ -1,8 +1,6 @@
 #include "canvas.h"
-#include "sprites.h"
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 
 namespace {
 
@@ -41,67 +39,8 @@ bool Canvas::ParseHexColor(const std::string& hex, MatrixColor* out) {
     return ::ParseHexColor(hex, out);
 }
 
-bool Canvas::Draw(const std::string& palette, const std::string& grid) {
-    std::vector<MatrixColor> parsed_palette;
-    std::stringstream ss(palette);
-    std::string entry;
-    while (std::getline(ss, entry, ',')) {
-        MatrixColor color;
-        if (!ParseHexColor(entry, &color)) {
-            return false;
-        }
-        parsed_palette.push_back(color);
-        if (parsed_palette.size() > 16) {
-            return false;
-        }
-    }
-    if (parsed_palette.empty()) {
-        return false;
-    }
-
-    if (static_cast<int>(grid.size()) != width_ * height_) {
-        return false;
-    }
-    std::vector<MatrixColor> parsed_pixels(width_ * height_);
-    for (int i = 0; i < width_ * height_; i++) {
-        int index = HexDigit(grid[i]);
-        if (index < 0 || index >= static_cast<int>(parsed_palette.size())) {
-            return false;
-        }
-        parsed_pixels[i] = parsed_palette[index];
-    }
-
-    pixels_ = std::move(parsed_pixels);
-    return true;
-}
-
-bool Canvas::DrawSprite(const std::string& name) {
-    const Sprite* sprite = Sprites::Find(name);
-    if (sprite == nullptr) {
-        return false;
-    }
-    for (int y = 0; y < height_; y++) {
-        for (int x = 0; x < width_; x++) {
-            bool lit = y < 8 && x < 8 && ((sprite->rows[y] >> (7 - x)) & 1);
-            pixels_[y * width_ + x] = lit ? sprite->color : MatrixColor();
-        }
-    }
-    return true;
-}
-
-void Canvas::SetPixel(int x, int y, MatrixColor color) {
-    if (x < 0 || x >= width_ || y < 0 || y >= height_) {
-        return;
-    }
-    pixels_[y * width_ + x] = color;
-}
-
 void Canvas::Fill(MatrixColor color) {
     std::fill(pixels_.begin(), pixels_.end(), color);
-}
-
-void Canvas::Clear() {
-    std::fill(pixels_.begin(), pixels_.end(), MatrixColor());
 }
 
 void Canvas::RenderLocked(RgbMatrix* matrix) const {

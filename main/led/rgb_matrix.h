@@ -42,10 +42,6 @@ public:
     void FillLocked(MatrixColor color);
     void ShowLocked();
 
-    // Lights one raw strip index with no coordinate mapping applied, used to
-    // determine the panel's origin and wiring order. See SPEC.md open item 5.
-    void ShowProbePixel(int index);
-    void StartTestPattern();
 
     void StartAnimation(int interval_ms, std::function<void()> callback);
     void StopAnimation();

@@ -5,24 +5,15 @@
 #include <string>
 #include <vector>
 
-// A persistent pixel buffer for the voice-to-pixel-art feature. Holds
-// whatever was last drawn (a sprite or a freehand palette+grid) so it can be
-// redrawn as idle content until cleared or replaced.
+// A persistent pixel buffer held as idle content. The voice-to-pixel-art
+// feature it was built for was removed (SPEC.md 4.5); it survives because
+// self.led_matrix.turn_on (lamp mode) is built on Fill + RenderLocked.
 class Canvas {
 public:
     Canvas(int width, int height);
 
-    // `palette` is comma-separated 6-digit hex colors (e.g. "FF0000,00FF00"),
-    // up to 16 entries. `grid` is width*height hex-nibble characters
-    // (row-major, top-to-bottom) indexing into the palette. Returns false and
-    // leaves the canvas unchanged if either is malformed.
-    bool Draw(const std::string& palette, const std::string& grid);
-    // Returns false if `name` isn't in the sprite library.
-    bool DrawSprite(const std::string& name);
-    void SetPixel(int x, int y, MatrixColor color);
     // Sets every pixel to `color` (whole-panel solid fill).
     void Fill(MatrixColor color);
-    void Clear();
 
     // Pushes the current buffer to the matrix. Caller holds the lock and
     // calls ShowLocked() itself afterward.

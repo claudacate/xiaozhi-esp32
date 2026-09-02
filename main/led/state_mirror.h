@@ -39,14 +39,9 @@ public:
     // true draws an hour/minute hand face instead.
     void SetClockEnabled(bool enabled, bool analogue = false);
 
-    // Returns false if input is malformed or a sprite name isn't recognized.
-    bool CanvasDraw(const std::string& palette, const std::string& grid);
-    bool CanvasSprite(const std::string& name);
-    void CanvasSetPixel(int x, int y, MatrixColor color);
-    // Whole panel one solid colour, as idle content (replaces mood/clock like
-    // any other canvas content).
+    // Whole panel one solid colour, as idle content (replaces mood/clock).
+    // The only surviving canvas entry point - lamp mode (SPEC.md 4.0).
     void CanvasFill(MatrixColor color);
-    void CanvasClear();
 
     // Pomodoro/timer. Layered on top of idle content while running; the
     // underlying countdown keeps time regardless of what's on screen.
@@ -54,10 +49,6 @@ public:
     void CancelTimer();
     bool timer_running() const { return timer_running_; }
 
-    // Brief shake, then reveals a symbol (yes/no/maybe -> checkmark/cross/
-    // question); unrecognized symbols default to question. `answer` is not
-    // rendered (the matrix has no font for prose) - Xiaozhi speaks it.
-    void ShowFortune(const std::string& answer, const std::string& symbol);
     // Idle content: cycles weather icon (unrecognized condition -> generic
     // cloud) -> scrolling temperature -> scrolling clock, repeating until
     // replaced by other idle content. The temperature is a snapshot - only

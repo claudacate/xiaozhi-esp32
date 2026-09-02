@@ -8,107 +8,8 @@ namespace {
 
 // clang-format off
 const Sprite kSprites[] = {
-    {"heart", {
-        0b01100110,
-        0b11111111,
-        0b11111111,
-        0b11111111,
-        0b01111110,
-        0b00111100,
-        0b00011000,
-        0b00000000,
-    }, {255, 0, 40}},
-
-    {"star", {
-        0b00011000,
-        0b00011000,
-        0b00011000,
-        0b11111111,
-        0b11111111,
-        0b00011000,
-        0b00011000,
-        0b00011000,
-    }, {255, 200, 0}},
-
-    {"smiley", {
-        0b00111100,
-        0b01000010,
-        0b10100101,
-        0b10000001,
-        0b10000001,
-        0b10111101,
-        0b01000010,
-        0b00111100,
-    }, {255, 220, 0}},
-
-    {"ghost", {
-        0b00111100,
-        0b01111110,
-        0b11111111,
-        0b11111111,
-        0b11111111,
-        0b11111111,
-        0b11011011,
-        0b10110110,
-    }, {230, 230, 255}},
-
-    {"coffee", {
-        0b00100100,
-        0b00010010,
-        0b00100100,
-        0b01111100,
-        0b01111101,
-        0b01111101,
-        0b01111100,
-        0b00111000,
-    }, {160, 90, 30}},
-
-    {"invader", {
-        0b00100100,
-        0b00010010,
-        0b00111110,
-        0b01101011,
-        0b11111111,
-        0b10111101,
-        0b10100101,
-        0b00011000,
-    }, {0, 220, 90}},
-
-    {"checkmark", {
-        0b00000001,
-        0b00000010,
-        0b00000100,
-        0b10001000,
-        0b01010000,
-        0b00100000,
-        0b00000000,
-        0b00000000,
-    }, {0, 220, 90}},
-
-    {"cross", {
-        0b10000001,
-        0b01000010,
-        0b00100100,
-        0b00011000,
-        0b00011000,
-        0b00100100,
-        0b01000010,
-        0b10000001,
-    }, {255, 40, 40}},
-
-    {"question", {
-        0b01111100,
-        0b11000110,
-        0b00000110,
-        0b00001100,
-        0b00011000,
-        0b00011000,
-        0b00000000,
-        0b00011000,
-    }, {0, 180, 255}},
-
-    // Weather icons, used by StateMirror::ShowWeather (not exposed via Names(),
-    // which is for canvas.sprite's freehand-icon list).
+    // Weather icons, used by StateMirror::ShowWeather. These are the whole
+    // library now; the art/fortune icons went with SPEC.md 4.1 and 4.5.
     {"sunny", {
         0b01000010,
         0b00111100,
@@ -178,10 +79,6 @@ const Sprite* Sprites::Find(const std::string& name) {
     }
     ESP_LOGW(TAG, "Find: no sprite named '%s'", name.c_str());
     return nullptr;
-}
-
-const char* Sprites::Names() {
-    return "heart, star, smiley, ghost, coffee, invader, checkmark, cross, question";
 }
 
 void Sprites::RenderLocked(RgbMatrix* matrix, const Sprite* sprite) {

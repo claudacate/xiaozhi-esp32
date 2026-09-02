@@ -7,7 +7,6 @@
 #include "led/rgb_matrix.h"
 #include "led/state_mirror.h"
 #include "led/mood_effects.h"
-#include "led/sprites.h"
 #include "led/canvas.h"
 #include "mcp_server.h"
 #include "settings.h"
@@ -248,19 +247,6 @@ private:
                 return true;
             });
 
-        mcp_server.AddTool("self.led_matrix.fortune",
-            "Magic-8-ball animation: shakes, then reveals a symbol. Call alongside speaking the "
-            "actual answer (matrix shows symbol only). symbol: \"yes\"/\"no\"/\"maybe\" per the "
-            "answer's sentiment.",
-            PropertyList({
-                Property("answer", kPropertyTypeString),
-                Property("symbol", kPropertyTypeString)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                state_mirror_->ShowFortune(properties["answer"].value<std::string>(), properties["symbol"].value<std::string>());
-                return true;
-            });
-
         mcp_server.AddTool("self.led_matrix.set_state_mirror",
             "Pause/resume the 8x8 matrix (mood/clock/canvas/timer). Resuming restores what was "
             "set before, unlike turn_off.",
@@ -318,83 +304,7 @@ private:
                 return true;
             });
 
-        mcp_server.AddTool("self.canvas.sprite",
-            "Draw a built-in pixel-art icon as idle content. Prefer over self.canvas.draw when "
-            "the request matches one of: " +
-            std::string(Sprites::Names()),
-            PropertyList({
-                Property("name", kPropertyTypeString)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                auto name = properties["name"].value<std::string>();
-                if (!state_mirror_->CanvasSprite(name)) {
-                    throw std::runtime_error("Unknown sprite: " + name + ". Valid sprites: " + Sprites::Names());
-                }
-                return true;
-            });
-
-        mcp_server.AddTool("self.canvas.draw",
-            "Draw freehand pixel art as idle content, when self.canvas.sprite doesn't cover it. "
-            "palette: comma-separated 6-digit hex colors (e.g. \"000000,FF0000,FFFFFF\", up to 16, "
-            "index 0 = background). grid: 64 hex-nibble chars (0-9,a-f), one per pixel, row-major "
-            "from top-left, indexing palette. Keep icons simple/blocky, not detailed scenes.",
-            PropertyList({
-                Property("palette", kPropertyTypeString),
-                Property("grid", kPropertyTypeString)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                auto palette = properties["palette"].value<std::string>();
-                auto grid = properties["grid"].value<std::string>();
-                if (!state_mirror_->CanvasDraw(palette, grid)) {
-                    throw std::runtime_error("Invalid palette or grid: palette must be comma-separated 6-digit "
-                        "hex colors, grid must be exactly 64 hex-nibble characters each indexing into palette.");
-                }
-                return true;
-            });
-
-        mcp_server.AddTool("self.canvas.set_pixel",
-            "Set a single canvas pixel, e.g. to add a detail. color: 6-digit hex (e.g. FF0000).",
-            PropertyList({
-                Property("x", kPropertyTypeInteger, 0, MATRIX_WIDTH - 1),
-                Property("y", kPropertyTypeInteger, 0, MATRIX_HEIGHT - 1),
-                Property("color", kPropertyTypeString)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                MatrixColor color;
-                auto color_str = properties["color"].value<std::string>();
-                if (!Canvas::ParseHexColor(color_str, &color)) {
-                    throw std::runtime_error("Invalid color: " + color_str + ". Expected a 6-digit hex string, e.g. FF0000.");
-                }
-                state_mirror_->CanvasSetPixel(properties["x"].value<int>(), properties["y"].value<int>(), color);
-                return true;
-            });
-
-        mcp_server.AddTool("self.canvas.clear",
-            "Clear the canvas; goes dark while idle.",
-            PropertyList(),
-            [this](const PropertyList& properties) -> ReturnValue {
-                state_mirror_->CanvasClear();
-                return true;
-            });
-
         // Bring-up helpers: prove the wiring and establish the panel's layout.
-        mcp_server.AddTool("self.led_matrix.test_pattern",
-            "Run a test pattern to verify the matrix works.",
-            PropertyList(),
-            [this](const PropertyList& properties) -> ReturnValue {
-                matrix_->StartTestPattern();
-                return true;
-            });
-
-        mcp_server.AddTool("self.led_matrix.probe_pixel",
-            "Light a single LED by raw index, to determine panel layout.",
-            PropertyList({
-                Property("index", kPropertyTypeInteger, 0, MATRIX_WIDTH * MATRIX_HEIGHT - 1)
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                matrix_->ShowProbePixel(properties["index"].value<int>());
-                return true;
-            });
     }
 
     void InitializeTools() {

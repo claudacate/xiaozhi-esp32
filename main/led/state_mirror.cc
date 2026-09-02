@@ -174,47 +174,10 @@ void StateMirror::SetClockEnabled(bool enabled, bool analogue) {
     RefreshDisplay();
 }
 
-bool StateMirror::CanvasDraw(const std::string& palette, const std::string& grid) {
-    if (!canvas_.Draw(palette, grid)) {
-        ESP_LOGW(TAG, "CanvasDraw: malformed palette/grid");
-        return false;
-    }
-    ESP_LOGI(TAG, "CanvasDraw: ok");
-    idle_mode_ = IdleMode::kCanvas;
-    RefreshDisplay();
-    return true;
-}
-
-bool StateMirror::CanvasSprite(const std::string& name) {
-    if (!canvas_.DrawSprite(name)) {
-        ESP_LOGW(TAG, "CanvasSprite: unknown sprite '%s'", name.c_str());
-        return false;
-    }
-    ESP_LOGI(TAG, "CanvasSprite: '%s'", name.c_str());
-    idle_mode_ = IdleMode::kCanvas;
-    RefreshDisplay();
-    return true;
-}
-
-void StateMirror::CanvasSetPixel(int x, int y, MatrixColor color) {
-    canvas_.SetPixel(x, y, color);
-    idle_mode_ = IdleMode::kCanvas;
-    RefreshDisplay();
-}
-
 void StateMirror::CanvasFill(MatrixColor color) {
     ESP_LOGI(TAG, "CanvasFill: %02X%02X%02X", color.red, color.green, color.blue);
     canvas_.Fill(color);
     idle_mode_ = IdleMode::kCanvas;
-    RefreshDisplay();
-}
-
-void StateMirror::CanvasClear() {
-    ESP_LOGI(TAG, "CanvasClear");
-    canvas_.Clear();
-    if (idle_mode_ == IdleMode::kCanvas) {
-        idle_mode_ = IdleMode::kDark;
-    }
     RefreshDisplay();
 }
 
@@ -275,39 +238,6 @@ void StateMirror::ShowAlarmFlash() {
 
     StartTransient(kFlashFrames, kFlashIntervalMs, [this, kRedHalf, kBlueHalf]() {
         matrix_->FillLocked(animation_step_ % 2 == 0 ? kRedHalf : kBlueHalf);
-        matrix_->ShowLocked();
-        animation_step_++;
-    });
-}
-
-void StateMirror::ShowFortune(const std::string& answer, const std::string& symbol) {
-    ESP_LOGI(TAG, "ShowFortune: answer='%s' symbol='%s'", answer.c_str(), symbol.c_str());
-
-    std::string lower = ToLower(symbol);
-    std::string sprite_name = "question";
-    if (lower == "yes") {
-        sprite_name = "checkmark";
-    } else if (lower == "no") {
-        sprite_name = "cross";
-    }
-    const Sprite* sprite = Sprites::Find(sprite_name);
-
-    const int kShakeFrames = 25;   // ~2s at 80ms/tick
-    const int kRevealFrames = 25;  // ~2s at 80ms/tick
-    StartTransient(kShakeFrames + kRevealFrames, 80, [this, sprite, kShakeFrames]() {
-        if (animation_step_ < kShakeFrames) {
-            matrix_->FillLocked(MatrixColor());
-            int width = matrix_->width();
-            int height = matrix_->height();
-            for (int i = 0; i < 6; i++) {
-                uint32_t r = esp_random();
-                int x = r % width;
-                int y = (r / width) % height;
-                matrix_->SetPixelLocked(x, y, {180, 180, 180});
-            }
-        } else {
-            Sprites::RenderLocked(matrix_, sprite);
-        }
         matrix_->ShowLocked();
         animation_step_++;
     });

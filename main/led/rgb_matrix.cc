@@ -167,43 +167,6 @@ void RgbMatrix::ShowLocked() {
     led_strip_refresh(led_strip_);
 }
 
-void RgbMatrix::ShowProbePixel(int index) {
-    StopAnimation();
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    FillLocked(MatrixColor());
-    if (index >= 0 && index < (int)frame_.size()) {
-        frame_[index] = {255, 255, 255};
-    }
-    ShowLocked();
-    ESP_LOGI(TAG, "Probe: raw strip index %d", index);
-}
-
-// Walks the panel one pixel at a time in mapped (x, y) order, red then green
-// then blue, so a wrong layout or a dead pixel is obvious to the eye.
-void RgbMatrix::StartTestPattern() {
-    StartAnimation(120, [this]() {
-        static int step = 0;
-        int count = width_ * height_;
-        int position = step % count;
-        int phase = (step / count) % 3;
-
-        MatrixColor color;
-        if (phase == 0) {
-            color = {255, 0, 0};
-        } else if (phase == 1) {
-            color = {0, 255, 0};
-        } else {
-            color = {0, 0, 255};
-        }
-
-        FillLocked(MatrixColor());
-        SetPixelLocked(position % width_, position / width_, color);
-        ShowLocked();
-        step++;
-    });
-}
-
 void RgbMatrix::StartAnimation(int interval_ms, std::function<void()> callback) {
     if (led_strip_ == nullptr) {
         return;
