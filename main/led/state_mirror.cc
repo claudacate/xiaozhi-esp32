@@ -8,6 +8,7 @@
 #include "assets/lang_config.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <esp_log.h>
@@ -159,10 +160,11 @@ void StateMirror::ClearMood(bool permanent) {
     RefreshDisplay();
 }
 
-void StateMirror::SetClockEnabled(bool enabled) {
-    ESP_LOGI(TAG, "SetClockEnabled(%d)", enabled);
+void StateMirror::SetClockEnabled(bool enabled, bool analogue) {
+    ESP_LOGI(TAG, "SetClockEnabled(%d, analogue=%d)", enabled, analogue);
     if (enabled) {
         idle_mode_ = IdleMode::kClock;
+        clock_analogue_ = analogue;
         clock_scroll_active_ = false;
         clock_last_scroll_us_ = 0;  // force an immediate scroll
     } else if (idle_mode_ == IdleMode::kClock) {
@@ -261,9 +263,21 @@ void StateMirror::OnTimerCheck() {
         const char* message = timer_mode_ == "pomodoro" ? "Pomodoro session complete!" : "Timer's up!";
         Application::GetInstance().Alert("Timer", message, "happy", Lang::Sounds::P3_SUCCESS);
 
-        auto state = Application::GetInstance().GetDeviceState();
-        OnDeviceStateChanged(state, state);
+        ShowAlarmFlash();
     }
+}
+
+void StateMirror::ShowAlarmFlash() {
+    const MatrixColor kRedHalf{128, 0, 0};
+    const MatrixColor kBlueHalf{0, 0, 128};
+    const int kFlashIntervalMs = 250;
+    const int kFlashFrames = 10000 / kFlashIntervalMs;  // ~10s, or until a real state change (e.g. wake word) preempts it
+
+    StartTransient(kFlashFrames, kFlashIntervalMs, [this, kRedHalf, kBlueHalf]() {
+        matrix_->FillLocked(animation_step_ % 2 == 0 ? kRedHalf : kBlueHalf);
+        matrix_->ShowLocked();
+        animation_step_++;
+    });
 }
 
 void StateMirror::ShowFortune(const std::string& answer, const std::string& symbol) {
@@ -374,8 +388,13 @@ void StateMirror::ShowRest() {
             matrix_->StartAnimation(100, [this]() { ShowMoodFrame(); });
             break;
         case IdleMode::kClock:
-            ESP_LOGI(TAG, "-> rest, clock active");
-            matrix_->StartAnimation(kClockScrollIntervalMs, [this]() { ShowClockFrame(); });
+            if (clock_analogue_) {
+                ESP_LOGI(TAG, "-> rest, analogue clock active");
+                matrix_->StartAnimation(1000, [this]() { ShowAnalogueClockFrame(); });
+            } else {
+                ESP_LOGI(TAG, "-> rest, clock active");
+                matrix_->StartAnimation(kClockScrollIntervalMs, [this]() { ShowClockFrame(); });
+            }
             break;
         case IdleMode::kCanvas:
             ESP_LOGI(TAG, "-> rest, canvas active");
@@ -473,6 +492,34 @@ void StateMirror::ShowClockFrame() {
     }
 
     matrix_->FillLocked(MatrixColor());
+    matrix_->ShowLocked();
+}
+
+void StateMirror::ShowAnalogueClockFrame() {
+    time_t now = time(nullptr);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+
+    const float kTwoPi = 6.28318530718f;
+    const float kCenter = (matrix_->width() - 1) / 2.0f;
+    const MatrixColor kHourColor{255, 170, 0};
+    const MatrixColor kMinuteColor{0, 220, 255};
+
+    auto draw_hand = [this, kCenter](float angle, float length, MatrixColor color) {
+        for (float d = 1.0f; d <= length; d += 1.0f) {
+            int x = static_cast<int>(std::lround(kCenter + std::sin(angle) * d));
+            int y = static_cast<int>(std::lround(kCenter - std::cos(angle) * d));
+            matrix_->SetPixelLocked(x, y, color);
+        }
+    };
+
+    float minute_frac = tm_now.tm_min / 60.0f;
+    float hour_angle = ((tm_now.tm_hour % 12) + minute_frac) / 12.0f * kTwoPi;
+    float minute_angle = minute_frac * kTwoPi;
+
+    matrix_->FillLocked(MatrixColor());
+    draw_hand(hour_angle, 2.0f, kHourColor);
+    draw_hand(minute_angle, 3.5f, kMinuteColor);
     matrix_->ShowLocked();
 }
 

@@ -35,7 +35,9 @@ public:
     // showing before; clearing one goes dark rather than restoring a prior one.
     bool SetMood(const std::string& mood, uint8_t intensity, bool permanent = true);
     void ClearMood(bool permanent = true);
-    void SetClockEnabled(bool enabled);
+    // analogue: false draws the scrolling HH:MM digital clock (default),
+    // true draws an hour/minute hand face instead.
+    void SetClockEnabled(bool enabled, bool analogue = false);
 
     // Returns false if input is malformed or a sprite name isn't recognized.
     bool CanvasDraw(const std::string& palette, const std::string& grid);
@@ -71,6 +73,7 @@ private:
     void RefreshDisplay();
     void ShowMoodFrame();
     void ShowClockFrame();
+    void ShowAnalogueClockFrame();
     void ShowWeatherFrame();
     void ShowTimerFrame();
     void ShowCanvasFrame();
@@ -82,10 +85,15 @@ private:
 
     // Runs frame_fn for total_frames ticks at interval_ms (frame_fn must
     // increment animation_step_ itself and call ShowLocked), then resumes
-    // whatever the live device state calls for. Shared by mood preview and
-    // fortune.
+    // whatever the live device state calls for. Shared by mood preview,
+    // fortune, and the timer-completion alarm flash. Note this also means
+    // any real device state change (e.g. a wake word) cuts a transient short,
+    // since OnDeviceStateChanged always wins the animation slot.
     void StartTransient(int total_frames, int interval_ms, std::function<void()> frame_fn);
     void ShowTransientFrame();
+
+    // Red/blue flash, ~10s, shown when a timer/Pomodoro completes.
+    void ShowAlarmFlash();
 
     static void TimerCheckCallback(void* arg);
     void OnTimerCheck();
@@ -105,6 +113,7 @@ private:
     std::string weather_temp_text_;
     std::string weather_clock_text_;
 
+    bool clock_analogue_ = false;
     bool clock_scroll_active_ = false;
     std::string clock_scroll_text_;
     // Start of the last scroll, for the repeat interval. 0 = never scrolled,

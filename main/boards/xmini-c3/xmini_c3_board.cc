@@ -234,13 +234,17 @@ private:
             });
 
         mcp_server.AddTool("self.led_matrix.show_clock",
-            "Show a scrolling HH:MM clock during idle time; scrolls every 10s. Replaces "
-            "mood/canvas while enabled.",
+            "Show a clock during idle time, replacing mood/canvas while enabled. style: "
+            "\"digital\" (default) scrolls HH:MM every 10s; \"analogue\" draws hour/minute "
+            "hands (8x8 resolution, so the minute hand is approximate, not exact-to-the-minute).",
             PropertyList({
-                Property("enabled", kPropertyTypeBoolean)
+                Property("enabled", kPropertyTypeBoolean),
+                Property("style", kPropertyTypeString, std::string("digital"))
             }),
             [this](const PropertyList& properties) -> ReturnValue {
-                state_mirror_->SetClockEnabled(properties["enabled"].value<bool>());
+                auto style = properties["style"].value<std::string>();
+                bool analogue = style == "analogue" || style == "analog";
+                state_mirror_->SetClockEnabled(properties["enabled"].value<bool>(), analogue);
                 return true;
             });
 
@@ -293,9 +297,10 @@ private:
             });
 
         mcp_server.AddTool("self.timer.start",
-            "Start a countdown timer: fills pixels green to amber to red as it nears the end, "
-            "announces completion aloud. mode: \"pomodoro\" or \"timer\" (affects only the "
-            "completion message).",
+            "Start a countdown timer: fills pixels green to amber to red as it nears the end. "
+            "On completion, plays a chime and flashes the matrix red/blue for ~10s (cut short "
+            "early if a new request or wake word arrives). mode: \"pomodoro\" or \"timer\" "
+            "(affects only the completion message).",
             PropertyList({
                 Property("minutes", kPropertyTypeInteger, 1, 180),
                 Property("mode", kPropertyTypeString, std::string("timer"))
