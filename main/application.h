@@ -100,6 +100,7 @@ private:
     void ShowActivationCode(const std::string& code, const std::string& message);
     void OnClockTimer();
     void SetListeningMode(ListeningMode mode);
+    void CloseAudioChannelForQuietMode();
 };
 
 #endif // _APPLICATION_H_

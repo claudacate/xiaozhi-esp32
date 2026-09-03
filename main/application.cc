@@ -686,19 +686,7 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(!quiet_mode_);
-            if (quiet_mode_ && quiet_close_pending_) {
-                // Layer 3, deferred to here on purpose: closing the channel
-                // inside the tool handler would cut off the assistant's
-                // confirmation. Scheduled rather than called inline to avoid
-                // re-entering SetDeviceState from OnAudioChannelClosed.
-                quiet_close_pending_ = false;
-                Schedule([this]() {
-                    if (protocol_ && protocol_->IsAudioChannelOpened()) {
-                        ESP_LOGI(TAG, "Quiet mode: closing audio channel");
-                        protocol_->CloseAudioChannel();
-                    }
-                });
-            }
+            CloseAudioChannelForQuietMode();
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -706,6 +694,15 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            if (quiet_mode_ && quiet_close_pending_) {
+                // Sunrise alarm armed mid-conversation: the spoken confirmation
+                // has just finished (Speaking -> Listening). An auto-stop turn
+                // returns here, not to Idle, so this is the first point the
+                // turn can be torn down - otherwise the mic stays live until
+                // the server's inactivity timeout.
+                CloseAudioChannelForQuietMode();
+                break;
+            }
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
@@ -762,6 +759,25 @@ void Application::SetQuietMode(bool quiet) {
             audio_service_.EnableWakeWordDetection(true);
         }
     }
+}
+
+void Application::CloseAudioChannelForQuietMode() {
+    if (!quiet_mode_ || !quiet_close_pending_) {
+        return;
+    }
+    // Layer 3, deferred out of SetQuietMode() on purpose: closing the channel
+    // inside the tool handler would cut off the assistant's confirmation.
+    // Serviced on the first transition into Idle or Listening after the alarm
+    // is armed - an auto-stop turn returns to Listening after its TTS, not to
+    // Idle. Scheduled rather than called inline to avoid re-entering
+    // SetDeviceState from OnAudioChannelClosed.
+    quiet_close_pending_ = false;
+    Schedule([this]() {
+        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+            ESP_LOGI(TAG, "Quiet mode: closing audio channel");
+            protocol_->CloseAudioChannel();
+        }
+    });
 }
 
 void Application::Reboot() {
