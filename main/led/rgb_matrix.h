@@ -23,6 +23,9 @@ public:
     RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine = false, int rotation_ccw_steps = 0);
     ~RgbMatrix();
 
+    // Brightness (percent) used when NVS has no stored value.
+    static constexpr uint8_t kDefaultBrightness = 50;
+
     // Brightness is 0-100. The power budget still applies on top of it, so no
     // brightness value can produce a frame that exceeds the supply.
     void SetBrightness(uint8_t brightness, bool permanent = false);

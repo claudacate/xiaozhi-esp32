@@ -4,8 +4,6 @@
 
 #define TAG "RgbMatrix"
 
-#define DEFAULT_BRIGHTNESS 50
-
 // A WS2812 draws roughly 20mA per colour channel at full scale, so a pixel
 // showing full white is about 60mA. Used to estimate a frame's draw.
 #define MILLIAMPS_PER_CHANNEL 20
@@ -52,7 +50,7 @@ RgbMatrix::RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine, in
     ESP_ERROR_CHECK(esp_timer_create(&animation_timer_args, &animation_timer_));
 
     Settings settings("matrix");
-    brightness_ = settings.GetInt("brightness", DEFAULT_BRIGHTNESS);
+    brightness_ = settings.GetInt("brightness", kDefaultBrightness);
     max_milliamps_ = settings.GetInt("max_ma", DEFAULT_BUDGET_MA);
     ESP_LOGI(TAG, "%dx%d matrix on GPIO%d, brightness %d%%, budget %dmA, rotation %d x 90deg CCW",
         width_, height_, gpio, brightness_, max_milliamps_, rotation_ccw_steps_);

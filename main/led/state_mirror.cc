@@ -128,6 +128,10 @@ StateMirror::StateMirror(RgbMatrix* matrix)
             static_cast<long long>(alarm_target_), alarm_ramp_minutes_, quiet_active_);
         idle_mode_saved_ = idle_mode_;
         idle_mode_ = IdleMode::kSunrise;
+        // Re-assert the wake-light brightness override across a reboot; the
+        // user's stored level (matrix/brightness) is untouched and restored by
+        // ReleaseAlarm. Non-permanent, so it never reaches NVS.
+        matrix_->SetBrightness(100, false);
     }
 
     esp_timer_create_args_t timer_check_args = {
@@ -269,6 +273,10 @@ bool StateMirror::SetSunriseAlarm(const std::string& time_hhmm, int ramp_minutes
     // Counterpart to turn_off, exactly as turn_on needs: without this a prior
     // turn_off leaves the mirror disabled and the alarm silently shows nothing.
     enabled_ = true;
+    // Drive the wake light to full for the ramp; the mA budget in ShowLocked()
+    // still caps the peak frame. Non-permanent: the user's stored brightness
+    // (matrix/brightness) is left intact and restored by ReleaseAlarm.
+    matrix_->SetBrightness(100, false);
 
     ESP_LOGI(TAG, "SetSunriseAlarm: %02d:%02d in %lld s, ramp %d min, peak %d min early",
         hh, mm, static_cast<long long>(target - now), ramp_minutes, kLightLeadMinutes);
@@ -310,6 +318,12 @@ void StateMirror::EnterQuiet(bool quiet) {
 
 void StateMirror::ReleaseAlarm(const char* why) {
     ESP_LOGI(TAG, "Sunrise alarm released: %s", why);
+    // Undo the ramp's full-brightness override, back to the user's stored level.
+    // A no-op if nothing was overridden this session (e.g. missed alarm caught
+    // on a fresh boot).
+    Settings settings("matrix");
+    matrix_->SetBrightness(
+        settings.GetInt("brightness", RgbMatrix::kDefaultBrightness), false);
     alarm_target_ = 0;
     alarm_sounding_ = false;
     alarm_no_clock_warned_ = false;
