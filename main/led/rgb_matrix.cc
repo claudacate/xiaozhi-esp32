@@ -8,9 +8,37 @@
 // showing full white is about 60mA. Used to estimate a frame's draw.
 #define MILLIAMPS_PER_CHANNEL 20
 
-// Conservative default for an external supply; raise it with SetPowerBudget()
-// once the actual supply is known.
-#define DEFAULT_BUDGET_MA 1000
+// Sized from measurement on THIS hardware, 2026-09-04. Not a datasheet guess
+// and not the original 1000mA, which was picked for the separate 5V supply
+// SPEC.md 1 assumed but that was never actually built - the panel is wired to
+// the board's VSYS pin, so panel current flows through the whole board.
+//
+// Measured VSYS driving all 64 px full white, USB attached:
+//     70%  brightness -> ~2680mA requested -> VSYS 3.7V   <- last good point
+//     80%  brightness -> ~3071mA requested -> VSYS 3.5V
+//     100% brightness -> ~3840mA requested -> VSYS 3.5V   <- same as 80%:
+//         the rail stopped responding, so anything above ~70% buys no light,
+//         only heat and battery drain.
+//
+// 2600mA sits just under that last good point. What it protects, in order of
+// how much it matters (see DECISIONS.md 2026-09-04):
+//   * D2, a 1N5819WS Schottky rated 1A, dissipating ~0.5W in a SOD-323 at the
+//     top of the old unlimited range - cumulative thermal damage.
+//   * SW1, a MINI MSK12C02 slide switch typically rated 0.3-0.5A, carrying all
+//     of it. Contacts degrade silently into intermittent faults.
+//   * The LiPo, which appears to carry part of the load once VSYS sags to its
+//     resting voltage.
+// The ESP32-C3 itself is NOT the fragile part: the ME6217C33M5G LDO in dropout
+// still passes ~3.3V and the C3 runs to 3.0V, which is why the board stayed up
+// at VSYS 3.5V.
+//
+// Side effect worth knowing: at this budget the sunrise ramp only clips in its
+// final ~1.5% (peak demand 2730mA vs 2600), so SPEC.md 8 item 14's inverted
+// curve is negligible here - unlike at 1000mA, where it cost 33% of peak.
+//
+// Raise this only with a fresh measurement, or after moving the panel to its
+// own 5V supply - at which point this can go much higher.
+#define DEFAULT_BUDGET_MA 2600
 
 RgbMatrix::RgbMatrix(gpio_num_t gpio, int width, int height, bool serpentine, int rotation_ccw_steps)
     : width_(width), height_(height), serpentine_(serpentine),
