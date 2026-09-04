@@ -55,8 +55,13 @@ const float kDawnFrom[3] = {1.00f, 0.00f, 0.00f};   // deep red
 const float kDawnTo[3]   = {1.00f, 0.706f, 0.431f}; // warm white (255,180,110)
 // One dim pixel while armed but not yet ramping: the panel is otherwise dark
 // all night, and once quiet mode engages this is the only confirmation the
-// alarm is set that the user can still get.
-const MatrixColor kArmedDot{12, 4, 0};
+// alarm is set that the user can still get. Deep red with no green at all -
+// green carries ~70% of perceived luminance, so the earlier {12,4,0} amber
+// read far brighter than its numbers suggest in a dark bedroom. The ramp runs
+// at 100% brightness, where ShowLocked()'s scale is exactly 255, so these are
+// the literal PWM values. Do not go below 2: WS2812 duty of 1 is uneven
+// between chips and some clones do not light at all.
+const MatrixColor kArmedDot{3, 0, 0};
 
 const char* StateName(DeviceState state) {
     switch (state) {
