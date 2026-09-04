@@ -273,18 +273,22 @@ bool StateMirror::SetSunriseAlarm(const std::string& time_hhmm, int ramp_minutes
     // Counterpart to turn_off, exactly as turn_on needs: without this a prior
     // turn_off leaves the mirror disabled and the alarm silently shows nothing.
     enabled_ = true;
-    // Drive the wake light to full for the ramp; the mA budget in ShowLocked()
-    // still caps the peak frame. Non-permanent: the user's stored brightness
-    // (matrix/brightness) is left intact and restored by ReleaseAlarm.
-    matrix_->SetBrightness(100, false);
-
     ESP_LOGI(TAG, "SetSunriseAlarm: %02d:%02d in %lld s, ramp %d min, peak %d min early",
         hh, mm, static_cast<long long>(target - now), ramp_minutes, kLightLeadMinutes);
 
     SaveAlarm();
     EnterQuiet(true);
     UpdateCheckTimer();
+    // Swap the panel to the sunrise frame BEFORE raising brightness. The
+    // reverse order flashes: the previous idle animation keeps rendering at
+    // its own frame rate across SaveAlarm()/EnterQuiet()'s two NVS commits, so
+    // a mood set to 1% suddenly draws several frames at 100% before the
+    // sunrise takes over. This way the only frames at 100% are sunrise frames.
     RefreshDisplay();
+    // Drive the wake light to full for the ramp; the mA budget in ShowLocked()
+    // still caps the peak frame. Non-permanent: the user's stored brightness
+    // (matrix/brightness) is left intact and restored by ReleaseAlarm.
+    matrix_->SetBrightness(100, false);
     return true;
 }
 
